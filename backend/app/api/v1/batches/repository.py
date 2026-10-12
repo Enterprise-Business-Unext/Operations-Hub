@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import Date, func, or_
-from sqlalchemy.orm import InstrumentedAttribute, Session
+from sqlalchemy.orm import InstrumentedAttribute, Session, joinedload
 
 from app.models.batch import (
     Accommodation,
@@ -13,7 +13,13 @@ from app.models.batch import (
     DeliveryMode,
     Entity,
 )
-from app.models.session import FacultyUtilization, TrainingSession
+from app.models.batch_edit import BatchEditHistory
+from app.models.session import (
+    FacultyUtilization,
+    TERMINAL_UTILIZATION_STATUSES,
+    TrainingSession,
+    SessionStatus,
+)
 from app.api.v1.batches.repository_interfaces import BatchScope, IBatchRepository
 
 
@@ -25,8 +31,7 @@ _OWNERSHIP_COLUMNS: Dict[str, InstrumentedAttribute] = {
     "manager": Batch.primary_manager_id,
 }
 
-_CONDUCTED_STATUSES = ["Completed"]
-_TERMINAL_STATUSES = {"Completed"}
+_CONDUCTED_STATUSES = [SessionStatus.Completed]
 
 
 class BatchRepository(IBatchRepository):
@@ -35,7 +40,10 @@ class BatchRepository(IBatchRepository):
 
     # --- Batch reads ---
     def get_by_id(self, batch_id: UUID) -> Optional[Batch]:
-        return self.db.query(Batch).filter(Batch.id == batch_id).first()
+        return self.db.query(Batch).options(
+            joinedload(Batch.coordinator),
+            joinedload(Batch.sales_spoc)
+        ).filter(Batch.id == batch_id).first()
 
     def get_by_batch_id(self, batch_id: str) -> Optional[Batch]:
         return self.db.query(Batch).filter(Batch.batch_id == batch_id).first()
@@ -70,7 +78,13 @@ class BatchRepository(IBatchRepository):
         skip: int = 0,
         limit: int = 100,
     ) -> List[Batch]:
-        query = self._apply_scope(self.db.query(Batch), scope)
+        query = self._apply_scope(
+            self.db.query(Batch).options(
+                joinedload(Batch.coordinator),
+                joinedload(Batch.sales_spoc)
+            ),
+            scope
+        )
 
         if status_filter:
             query = query.filter(Batch.status == status_filter)
@@ -131,7 +145,10 @@ class BatchRepository(IBatchRepository):
         if not batch_ids:
             return {}
         rows = (
-            self.db.query(TrainingSession.batch_id, func.count(TrainingSession.id))
+            self.db.query(
+                TrainingSession.batch_id,
+                func.count(TrainingSession.id),
+            )
             .filter(TrainingSession.batch_id.in_(list(batch_ids)))
             .group_by(TrainingSession.batch_id)
             .all()
@@ -144,8 +161,18 @@ class BatchRepository(IBatchRepository):
         return self.db.query(TrainingSession).filter(
             TrainingSession.batch_id.in_(list(batch_ids)),
             TrainingSession.session_date == target_date,
-            TrainingSession.status == "Scheduled",
         ).order_by(TrainingSession.start_time.asc().nullslast()).all()
+
+    def list_scheduled_sessions_after(self, batch_id: UUID, after_date: date) -> List[TrainingSession]:
+        return (
+            self.db.query(TrainingSession)
+            .filter(
+                TrainingSession.batch_id == batch_id,
+                TrainingSession.session_date > after_date,
+            )
+            .order_by(TrainingSession.session_date.asc(), TrainingSession.start_time.asc().nullslast())
+            .all()
+        )
 
     def list_actual_sessions_on_date(self, batch_ids: Sequence[UUID], target_date: date) -> List[FacultyUtilization]:
         if not batch_ids:
@@ -153,7 +180,6 @@ class BatchRepository(IBatchRepository):
         return self.db.query(FacultyUtilization).filter(
             FacultyUtilization.batch_id.in_(list(batch_ids)),
             FacultyUtilization.date_of_training.cast(Date) == target_date,
-            FacultyUtilization.status == "Scheduled",
         ).order_by(FacultyUtilization.start_time.asc().nullslast()).all()
 
     def export_finance_rows(
@@ -188,13 +214,13 @@ class BatchRepository(IBatchRepository):
     def list_non_terminal_faculty_sessions(self, batch_id: UUID) -> List[FacultyUtilization]:
         return self.db.query(FacultyUtilization).filter(
             FacultyUtilization.batch_id == batch_id,
-            FacultyUtilization.status.notin_(_TERMINAL_STATUSES),
+            FacultyUtilization.status.notin_(TERMINAL_UTILIZATION_STATUSES),
         ).all()
 
     def list_non_terminal_training_sessions(self, batch_id: UUID) -> List[TrainingSession]:
         return self.db.query(TrainingSession).filter(
             TrainingSession.batch_id == batch_id,
-            TrainingSession.status.notin_(_TERMINAL_STATUSES),
+            TrainingSession.status.notin_(TERMINAL_UTILIZATION_STATUSES),
         ).all()
 
     # --- Approval configuration ---
@@ -290,3 +316,14 @@ class BatchRepository(IBatchRepository):
 
     def refresh(self, instance) -> None:
         self.db.refresh(instance)
+
+    def add_edit_history(self, entry: BatchEditHistory) -> None:
+        self.db.add(entry)
+
+    def list_edit_history(self, batch_id: UUID) -> List[BatchEditHistory]:
+        return (
+            self.db.query(BatchEditHistory)
+            .filter(BatchEditHistory.batch_id == batch_id)
+            .order_by(BatchEditHistory.created_at.desc())
+            .all()
+        )

@@ -125,11 +125,11 @@ the backend at `redis:6379` and is persisted in the `redisdata` volume for
 caching and rate limiting. Set `REDIS_PASSWORD` in `.env` to enable Redis
 authentication.
 
-### 2. Apply Database Migrations
+### 2. Initialize the Database Schema
 
-```powershell
-docker compose exec backend alembic upgrade head
-```
+The backend runs `init_db()` on startup to add missing schema columns and enum
+values. In production it skips optional seed data while still ensuring schema
+compatibility.
 
 ### 3. Initialize Teams and Default Users
 
@@ -635,13 +635,13 @@ Cancelled           → {} (terminal)
 | `TrainingSession` | Curriculum timetable (planned) |
 | `FacultyUtilization` | Actual delivery ledger |
 
-**TrainingSession States**: `Scheduled`, `Completed`, `Cancelled`, `Not Conducted`
-**FacultyUtilization States**: `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `Not Conducted`
+**TrainingSession States**: `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `Not Conducted`, `Rescheduled`
+**FacultyUtilization States**: `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `Not Conducted`, `Rescheduled`
 **TERMINAL_UTILIZATION_STATUSES**: `Completed`, `Cancelled`, `Not Conducted`
 
 **Transitions - TrainingSession**
-- `Scheduled` → `Completed` (when linked utilization marked Completed)
-- Any → `Cancelled`/`Not Conducted` (batch cancellation cascade)
+- `Scheduled` → `Completed` (when linked utilization is completed through Gate 1)
+- `Scheduled`/`InProgress` → `Cancelled`/`Not Conducted` (batch cancellation cascade)
 
 **Transitions - FacultyUtilization**
 - `Scheduled` → `InProgress`
@@ -654,7 +654,8 @@ Cancelled           → {} (terminal)
 **Create Utilization** (`POST /api/v1/sessions`)
 - Requires `faculty_name`, validates time window (`end_time > start_time`)
 - Auto-resolves faculty from user roster (exact → ilike → free-text)
-- If linked to `TrainingSession` and `status="Completed"`, marks scheduled session `Completed`
+- A logged delivery starts as `Scheduled`; completion is reserved for Gate 1
+- A completed delivery must be linked to a `TrainingSession`; Gate 1 sets the session and its linked timetable row to `Completed`
 - Triggers `batch_avg_feedback` calculation
 
 **Gate 1 (Complete Session)** (`PATCH /api/v1/sessions/{id}/complete`)
@@ -663,8 +664,8 @@ Cancelled           → {} (terminal)
 - Syncs linked `TrainingSession` to `Completed`
 - Triggers batch feedback calculation
 
-**Batch Auto-Completion**
-After any session transition: if ALL sessions (scheduled + logged) are terminal and batch not `Completed`/`Cancelled`, sets batch to `Completed`
+**Batch Completion**
+Session outcomes do not automatically complete a batch. Gate 2 is the only workflow that sets a batch to `Completed`, after `batch_avg_feedback` exists and all scheduled and logged sessions have terminal outcomes.
 
 ---
 
@@ -683,12 +684,10 @@ After any session transition: if ALL sessions (scheduled + logged) are terminal 
 
 **Batch Average Feedback Calculation**
 Runs after: Gate 1, any session create/update/cancel, nightly sync
-Preconditions (ALL must hold):
-1. Every non-cancelled planned day (`TrainingSession`) has at least one linked ledger row
-2. Every linked ledger row has terminal status
-3. At least one `Completed` row has `feedback_rating`
+Precondition:
+- At least one `Completed` row has `feedback_rating`
 - Mean taken over rated rows only
-- Unrated `Completed`, `Cancelled`, `Not Conducted` excluded but don't block
+- Unrated `Completed`, `Cancelled`, `Not Conducted` excluded from the mean
 - Rounded to 2 decimals, idempotent
 
 ---
@@ -748,7 +747,7 @@ If `batch.training_days > scheduled_dates`:
 
 **Faculty Utilization Overview** (`GET /api/v1/faculty/utilization`)
 - `total_faculty_count`: Active users with role=`Faculty`
-- `active_deployed_faculty`: Distinct faculty names in non-cancelled utilizations matching roster
+- `active_deployed_faculty`: Distinct faculty names in Scheduled, InProgress, or Completed utilizations matching roster
 - `overall_utilization_percentage`: `(deployed / total) * 100`
 - `domain_breakdown`: Per-domain faculty count and hours
 
@@ -814,8 +813,9 @@ If `batch.training_days > scheduled_dates`:
 **Manual Trigger**: `POST /api/v1/batches/{id}/sync-status` (Admin only)
 
 **Startup**
-- Dev mode (`ENVIRONMENT != "production"`): Runs `init_db()` (auto-migrate + seed)
-- Production: Skips auto-migration (requires manual `alembic upgrade head`)
+- All environments: Runs `init_db()` to ensure schema columns and enum values
+  exist
+- Production skips optional base-data seeding
 
 ---
 
@@ -844,7 +844,7 @@ If `batch.training_days > scheduled_dates`:
 - Computed: `effective_status` (Completed/Upcoming/Ongoing/Overdue)
 
 **FacultyUtilization**
-- `id`, `batch_id`, `training_session_id` (nullable), `faculty_name`, `date_of_training`, `start_time`, `end_time`, `topic`, `no_of_hours`, `venue`, `location_city`, `mode_of_delivery`, `status` (default "Completed")
+- `id`, `batch_id`, `training_session_id` (nullable), `faculty_name`, `date_of_training`, `start_time`, `end_time`, `topic`, `no_of_hours`, `venue`, `location_city`, `mode_of_delivery`, `status` (default "Scheduled"), `outcome_reason`, `outcome_at`, `outcome_by`
 - `feedback_submitted`, `feedback_rating`, `feedback_notes`, `outcome_reason`, `outcome_at`, `outcome_by`
 - `vertical`, `program_type_id`, `faculty_type_id`
 

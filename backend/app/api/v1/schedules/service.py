@@ -614,30 +614,13 @@ class ExcelIngestionService:
                 if not scope_ids.intersection({value for value in batch_user_ids if value is not None}):
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only apply schedules within your manager scope.")
         
-        # Schedule ingestion only allowed after batch is submitted for Approval 1
-        allowed_statuses = {"Approval 1 Pending", "Approval 2 Pending", "Upcoming", "Ongoing"}
-        if batch.status not in allowed_statuses:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, 
-                detail="Schedule can only be applied after batch is submitted for approval (status must be Approval 1 Pending or later)"
-            )
-        
-        if batch.status in {"Completed", "Cancelled"}:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Schedule cannot be applied to a completed or cancelled batch")
+        if batch.status == "Completed":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Schedule cannot be applied to a completed batch")
         if not items:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Schedule upload contains no valid rows")
 
-        # Validate training_days limit before processing items
-        if batch.training_days > 0:
-            existing_dates = {s.session_date for s in schedule_repo.list_scheduled_sessions_for_batch(batch.id)}
-            upload_dates = {item.date_of_training.date() for item in items}
-            total_unique_dates = len(existing_dates.union(upload_dates))
-            if total_unique_dates > batch.training_days:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Cannot add more training sessions than training_days ({batch.training_days}). "
-                           f"Upload would create {total_unique_dates} unique training dates."
-                )
+        existing_sessions = schedule_repo.list_scheduled_sessions_for_batch(batch.id)
+        existing_dates = {session.session_date for session in existing_sessions}
 
         errors: List[dict] = []
         prepared = []
@@ -666,7 +649,8 @@ class ExcelIngestionService:
                 errors.append({
                     "source_row": item.source_row, 
                     "message": f"Training date {item_date} is after batch end date {batch.end_date.date()}. "
-                               f"Consider extending batch end date or adjusting training date. "
+                               f"Extend the batch end date and update training days and total hours, "
+                               f"submit the batch changes for reapproval, then retry the schedule. "
                                f"Batch date range: {batch.start_date.date() if batch.start_date else 'Not set'} to {batch.end_date.date() if batch.end_date else 'Not set'}"
                 })
                 continue
@@ -685,13 +669,33 @@ class ExcelIngestionService:
             prepared.append((item, faculty_name))
 
         generated = []
-        if not errors and batch.training_days and batch.start_date and batch.end_date:
-            scheduled_dates = {item.date_of_training.date() for item, _ in prepared}
-            missing_count = max(0, batch.training_days - len(scheduled_dates))
+        if not errors and batch.training_days is not None:
+            total_session_count = len(existing_sessions) + len(prepared)
+            if total_session_count > batch.training_days:
+                errors.append({
+                    "source_row": 0,
+                    "message": (
+                        f"Schedule exceeds training_days ({batch.training_days}) with "
+                        f"{total_session_count} scheduled sessions. Every training_sessions row "
+                        "counts as one session, including multiple sessions on the same date. "
+                        "Extend the batch end date and training days (and update total hours), "
+                        "then submit the batch changes for reapproval before retrying the schedule."
+                    ),
+                })
+
+        if not errors and batch.training_days is not None and batch.training_days > 0 and batch.start_date and batch.end_date:
+            scheduled_dates = existing_dates.union(
+                item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
+                for item, _ in prepared
+            )
+            missing_count = max(
+                0,
+                batch.training_days - len(existing_sessions) - len(prepared),
+            )
             if missing_count:
                 faculty_name = (batch.faculty_assigned_text or getattr(batch, "faculty_name", None) or "").strip()
                 if not faculty_name:
-                    errors.append({"source_row": 0, "message": "A faculty assignment is required to generate missing training days"})
+                    errors.append({"source_row": 0, "message": "A faculty assignment is required to generate missing sessions"})
                 else:
                     candidate = batch.start_date.date()
                     end_candidate = batch.end_date.date() if batch.end_date else candidate + timedelta(days=30)
@@ -820,4 +824,3 @@ class ExcelIngestionService:
             "by_type": categories,
             "most_common": message_counts.most_common(5)
         }
-

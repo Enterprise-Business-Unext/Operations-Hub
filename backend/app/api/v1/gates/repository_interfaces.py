@@ -27,6 +27,10 @@ class IGateRepository(ABC):
         pass
 
     @abstractmethod
+    def delete_batch_edit_history(self, batch_id: UUID) -> None:
+        pass
+
+    @abstractmethod
     def commit(self) -> None:
         pass
 

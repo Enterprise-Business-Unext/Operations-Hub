@@ -228,6 +228,14 @@ Once `is_schema_locked=True`:
 - Restricted fields for non-admin/manager: `client_name`, `category`, `program_name`, `technology`, `domain`
 - Finance team can update finance fields regardless
 
+## Reapproval After Batch Edits
+
+Changes to batch identity, classification, client, delivery, schedule, enrollment, ownership, or faculty fields require both approval levels again. The update is recorded in `batch_edit_history` with the editor, timestamp, and JSON before/after values; assigned approvers can review these diffs in the approval dialog. Notes (`remarks`) and finance-only fields do not trigger reapproval or create history; unchanged values are ignored.
+
+For a qualifying change, the batch returns to `Approval 1 Pending`, both approver statuses reset to `Pending`, approval timestamps are cleared, the configured approvers are assigned, and the schema is unlocked. Approval notifications are sent to the first approver. Completed and cancelled batches cannot be changed through this edit flow.
+
+The edit-history table is created by the startup `init_db()` schema initialization. On successful Gate 2 completion, its rows for that batch are deleted in the same database transaction that marks the batch `Completed`.
+
 ## Finance Status Conditions
 
 Only Finance team or Admin can update:

@@ -68,16 +68,22 @@ describe("MyBatchesView schedule column", () => {
   });
 
   it("shows the scheduled day count once a timetable exists", () => {
-    renderView({ data: [makeBatch({ scheduled_session_count: 12 })] });
+    renderView({ data: [makeBatch({ training_days: 12, scheduled_session_count: 12 })] });
 
     expect(screen.getByText("12 days")).toBeTruthy();
     expect(screen.queryByText("Not scheduled")).toBeNull();
   });
 
   it("uses the singular form for a single scheduled day", () => {
-    renderView({ data: [makeBatch({ scheduled_session_count: 1 })] });
+    renderView({ data: [makeBatch({ training_days: 1, scheduled_session_count: 1 })] });
 
     expect(screen.getByText("1 day")).toBeTruthy();
+  });
+
+  it("warns when scheduled days exceed the batch training-day limit", () => {
+    renderView({ data: [makeBatch({ training_days: 15, scheduled_session_count: 16 })] });
+
+    expect(screen.getByText("16 / 15 days")).toBeTruthy();
   });
 });
 

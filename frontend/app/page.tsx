@@ -7,6 +7,7 @@ import {
   api, ActiveBatchesResponse, Batch, ManagerDashboardSummary, TrainingSession, User
 } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
+import { approvalReapprovalLabel } from "@/lib/approvalQueue";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { ActiveBatchesView } from "./dashboard/components/ActiveBatchesView";
 import { MyBatchesView } from "./dashboard/components/MyBatchesView";
@@ -79,6 +80,7 @@ type ApprovalColumnKey =
   | "city"
   | "submittedOn"
   | "status"
+  | "reapproval"
   | "action";
 
 // `program`, `domain` and `city` used to be sub-labels inside the Batch/Client/
@@ -94,6 +96,9 @@ const APPROVAL_COLUMN_DEFS: readonly TableColumnDef<Batch, ApprovalColumnKey>[] 
   { key: "city", label: "City", accessor: (b) => b.location_city ?? "" },
   { key: "submittedOn", label: "Submitted On", accessor: (b) => b.batch_request_date ?? "" },
   { key: "status", label: "Status", accessor: (b) => b.status ?? "", filterable: true },
+  // A first-time submission and reapproval #N sort apart because
+  // `compareTableValues` compares embedded numbers numerically.
+  { key: "reapproval", label: "Reapproval", accessor: (b) => approvalReapprovalLabel(b), filterable: true, align: "center" },
 ];
 
 const APPROVAL_ACCESSORS = buildSortAccessors(APPROVAL_COLUMN_DEFS);
@@ -116,6 +121,7 @@ const APPROVAL_EXPORT_COLUMNS: readonly CsvColumn<Batch>[] = [
   { key: "location_city", label: "City" },
   { key: "created_at", label: "Submitted On" },
   { key: "status", label: "Status" },
+  { key: "is_reapproval", label: "Reapproval", value: (b) => approvalReapprovalLabel(b) },
 ];
 
 const FINANCE_STATUS_OPTIONS = ["Pending", "Cleared"];
@@ -363,6 +369,24 @@ export default function DashboardPage() {
   const openBatchDetail = (batch: Batch, tab: BatchDetailTab = "overview") => {
     setDetailDrawerTab(tab);
     setSelectedBatchForDetail(batch);
+  };
+
+  // The active-list rows only carry the batch code, so the full record has to be
+  // resolved before the drawer can open. `search` is fuzzy, hence the exact
+  // code match before anything is opened.
+  const openBatchDetailByCode = async (batchId: string) => {
+    if (!batchId) return;
+    try {
+      const matches = await api.getBatches({ search: batchId });
+      const batch = matches.find((b) => b.batch_id === batchId);
+      if (!batch) {
+        notifyError(`Batch ${batchId} could not be opened`);
+        return;
+      }
+      openBatchDetail(batch);
+    } catch (err) {
+      notifyError("Failed to open batch details", err);
+    }
   };
 
   // Redirect if unauthenticated
@@ -953,6 +977,7 @@ export default function DashboardPage() {
               setActiveSessionPage(1);
             }}
             onRefresh={() => fetchActiveBatches(activeFilterDate)}
+            onOpenBatchDetail={(batchId) => openBatchDetailByCode(batchId)}
           />
         )}
 
@@ -991,6 +1016,15 @@ export default function DashboardPage() {
                       options: approvalFilterOptions("status"),
                       allLabel: "All statuses",
                       width: 175,
+                    },
+                    {
+                      key: "reapproval",
+                      label: "Reapproval",
+                      value: getApprovalFilter("reapproval"),
+                      onChange: (value) => setApprovalFilter("reapproval", value),
+                      options: approvalFilterOptions("reapproval"),
+                      allLabel: "All submissions",
+                      width: 160,
                     },
                     {
                       key: "domain",
@@ -1043,7 +1077,7 @@ export default function DashboardPage() {
                 />
               }
             >
-              <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1180 }}>
+              <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1260 }}>
                 <TableCaption>Batches waiting for your approval, oldest submissions first</TableCaption>
                 <thead>
                   <tr>
@@ -1159,6 +1193,20 @@ export default function DashboardPage() {
                           {approvalColumns.isVisible("status") && (
                             <td style={APPROVAL_CELL_STYLE}>
                               <StatusBadge status={b.status} />
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("reapproval") && (
+                            <td style={{ ...APPROVAL_CELL_STYLE, textAlign: "center" }}>
+                              {b.is_reapproval ? (
+                                <span
+                                  title={b.last_reapproval_at ? `Last modified ${formatDate(b.last_reapproval_at)}` : "Previously approved batch was modified"}
+                                  style={{ fontSize: "0.65rem", background: "#ede9fe", color: "#6d28d9", border: "1px solid #c4b5fd", borderRadius: 4, padding: "1px 5px", fontWeight: 700, whiteSpace: "nowrap" }}
+                                >
+                                  REAPPROVAL #{b.reapproval_count ?? 1}
+                                </span>
+                              ) : (
+                                <span style={{ color: "var(--text-dim)" }}>—</span>
+                              )}
                             </td>
                           )}
                           {approvalColumns.isVisible("action") && (

@@ -48,9 +48,9 @@ The backend uses APScheduler with a daily cron job at 00:30 IST (19:00 UTC previ
 
 ## Startup Behavior
 
-In development mode (`ENVIRONMENT != "production"`):
-- Runs `init_db()` to auto-migrate and seed base data
-- In production: skips auto-migration (requires manual `alembic upgrade head`)
+- Runs `init_db()` in every environment to ensure required schema columns and
+  enum values exist
+- Production skips optional base-data seeding
 
 On shutdown:
 - Stops the scheduler cleanly
@@ -113,10 +113,10 @@ This runs nightly to catch any batches that had rated deliveries but weren't upd
 
 ## Development vs Production
 
-| Environment | Auto-migrate | Scheduler |
-|-------------|--------------|-----------|
-| Development | Yes (`init_db()`) | Yes |
-| Production | No (manual alembic) | Yes |
+| Environment | Schema initialization | Base-data seeding | Scheduler |
+|-------------|-----------------------|-------------------|-----------|
+| Development | Yes (`init_db()`) | Yes | Yes |
+| Production | Yes (`init_db()`) | No | Yes |
 
 ## Monitoring
 

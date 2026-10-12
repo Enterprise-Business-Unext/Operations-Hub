@@ -5,6 +5,7 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 const getBatch = vi.fn();
 const getBatchOptions = vi.fn();
 const getFacultyTypes = vi.fn();
+const getProgramTypes = vi.fn();
 const getVerticals = vi.fn();
 const getSessions = vi.fn();
 const getScheduledSessions = vi.fn();
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getBatch: (...a: unknown[]) => getBatch(...a),
       getBatchOptions: (...a: unknown[]) => getBatchOptions(...a),
       getFacultyTypes: (...a: unknown[]) => getFacultyTypes(...a),
+      getProgramTypes: (...a: unknown[]) => getProgramTypes(...a),
       getVerticals: (...a: unknown[]) => getVerticals(...a),
       getSessions: (...a: unknown[]) => getSessions(...a),
       getScheduledSessions: (...a: unknown[]) => getScheduledSessions(...a),
@@ -127,6 +129,7 @@ describe("Log Faculty Utilization modal", () => {
     getBatch.mockResolvedValue(batch);
     getBatchOptions.mockResolvedValue([]);
     getFacultyTypes.mockResolvedValue([{ id: "ft-1", name: "Internal Full-time" }]);
+    getProgramTypes.mockResolvedValue([{ id: "pt-1", name: "RBT" }]);
     getVerticals.mockResolvedValue([{ id: "v-1", name: "IT/ITES" }]);
     getSessions.mockResolvedValue([]);
     getScheduledSessions.mockResolvedValue([scheduledSession]);
@@ -249,5 +252,55 @@ describe("Log Faculty Utilization modal", () => {
 
     expect(q.getAllByText(/does not match the/i).length).toBeGreaterThan(0);
     expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("captures the selected program type id on submit", async () => {
+    const { q, field, button } = await openLogUtilization();
+
+    fireEvent.click(q.getByRole("button", { name: "Yes" }));
+    fireEvent.change(field(/Faculty Type/i), { target: { value: "ft-1" } });
+    fireEvent.change(field(/Vertical/i), { target: { value: "IT/ITES" } });
+    fireEvent.change(field(/Program Type/i), { target: { value: "pt-1" } });
+    fireEvent.click(button(/Save Faculty Utilization/i));
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledTimes(1);
+    });
+    expect(createSession.mock.calls[0][0]).toMatchObject({ program_type_id: "pt-1", faculty_type_id: "ft-1" });
+  });
+
+  it("requires a program type before logging utilization", async () => {
+    const { q, field } = await openLogUtilization();
+
+    fireEvent.click(q.getByRole("button", { name: "Yes" }));
+    fireEvent.change(field(/Faculty Type/i), { target: { value: "ft-1" } });
+    fireEvent.change(field(/Vertical/i), { target: { value: "IT/ITES" } });
+    // Submit the form directly: the select's `required` attribute makes jsdom
+    // block the click-based submit exactly as a browser would, so this exercises
+    // the handler's own guard (the same defense-in-depth path as "Vertical is
+    // required") rather than the native constraint UI.
+    fireEvent.submit(document.getElementById("log-utilization-form") as HTMLFormElement);
+
+    expect(q.getAllByText(/Program Type is required/i).length).toBeGreaterThan(0);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("requires a faculty type before logging utilization", async () => {
+    const { q, field } = await openLogUtilization();
+
+    fireEvent.click(q.getByRole("button", { name: "Yes" }));
+    fireEvent.change(field(/Vertical/i), { target: { value: "IT/ITES" } });
+    fireEvent.change(field(/Program Type/i), { target: { value: "pt-1" } });
+    fireEvent.submit(document.getElementById("log-utilization-form") as HTMLFormElement);
+
+    expect(q.getAllByText(/Faculty Type is required/i).length).toBeGreaterThan(0);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("offers only Scheduled and Completed as delivery statuses", async () => {
+    const { field } = await openLogUtilization();
+
+    const status = field(/Delivery Status/i) as unknown as HTMLSelectElement;
+    expect(Array.from(status.options).map((o) => o.value)).toEqual(["Scheduled", "Completed"]);
   });
 });

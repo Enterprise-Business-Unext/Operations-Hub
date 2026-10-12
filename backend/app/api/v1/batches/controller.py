@@ -17,6 +17,7 @@ from app.schemas.batch import (
     BatchApprove,
     BatchResponse,
     BatchDetailResponse,
+    BatchEditHistoryResponse,
     BatchLifecycleStatusUpdate,
     ActiveBatchesResponse,
 )
@@ -224,6 +225,15 @@ def get_batch_detail(
     return service.get(id, current_user)
 
 
+@router.get("/{id}/edit-history", response_model=List[BatchEditHistoryResponse])
+def get_batch_edit_history(
+    id: UUID,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    return service.get_edit_history(id, current_user)
+
+
 @router.patch("/{id}", response_model=BatchResponse)
 async def update_batch(
     id: UUID,
@@ -234,12 +244,10 @@ async def update_batch(
     """Updates batch fields. Schema locked batches restrict modification to non-governed fields."""
     batch = service.update(id, batch_in, current_user)
 
-    # If batch was reset to Approval 1 Pending due to schedule change, notify approvers
-    if batch.status == "Approval 1 Pending" and batch.approver_1_status == "Pending" and batch.approver_2_status == "Pending":
-        try:
-            await NotificationService.notify_approval_requested(batch)
-        except Exception:
-            pass
+    if getattr(batch, "_reapproval_triggered", False):
+        changed_fields = getattr(batch, "_changed_fields_for_reapproval", None)
+        reapproval_count = batch.reapproval_count
+        await NotificationService.notify_approval_requested(batch, changed_fields, reapproval_count)
 
     return batch
 

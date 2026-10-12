@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from app.core.email import get_email_service
@@ -10,10 +10,27 @@ logger = logging.getLogger(__name__)
 class NotificationService:
 
     @classmethod
-    async def notify_approval_requested(cls, batch):
+    async def notify_approval_requested(cls, batch, changed_fields: Optional[Dict[str, Dict[str, Any]]] = None, reapproval_count: int = 0):
+        is_reapproval = reapproval_count > 0
+        
+        if is_reapproval:
+            subject = f"Reapproval Required: {batch.batch_id} (Reapproval #{reapproval_count})"
+            body = (
+                f"This batch was previously approved and has been modified.\n"
+                f"Changes requiring reapproval:\n"
+            )
+            if changed_fields:
+                for field, changes in changed_fields.items():
+                    before = changes.get("before", "N/A")
+                    after = changes.get("after", "N/A")
+                    body += f"  - {field}: {before} → {after}\n"
+        else:
+            subject = f"Approval Requested: {batch.batch_id}"
+            body = f"Batch {batch.batch_id} submitted for approval."
+        
         logger.info(
-            f"[NOTIFICATION TRIGGERED] Batch {batch.batch_id} submitted for approval. "
-            f"Approver 1: {batch.approver_1_id}, Approver 2: {batch.approver_2_id}"
+            f"[NOTIFICATION TRIGGERED] {subject}. "
+            f"Approver 1: {batch.approver_1_id}, Approver 2: {batch.approver_2_id}\n{body}"
         )
         await cls._send_approval_emails(batch, "requested")
 

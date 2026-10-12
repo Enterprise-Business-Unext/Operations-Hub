@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import inspect, text
+from sqlalchemy import Enum as SAEnum, String, inspect, text
 from app.core.database import SessionLocal, Base, engine
 from app.models.user import User, UserManagerMapping, Role, Team, AuditLog
 from app.models.batch import (
@@ -16,12 +16,13 @@ from app.models.batch import (
     ProgramType,
 )
 from app.models.session import TrainingSession
+from app.models.batch_edit import BatchEditHistory
 
 
 def _normalize_legacy_session_statuses(connection) -> None:
     status_updates = (
-        ("Completed", ("Cancelled", "NotConducted", "Not Conducted", "Rescheduled")),
-        ("Scheduled", ("InProgress", "In Progress")),
+        ("NotConducted", ("Not Conducted",)),
+        ("InProgress", ("In Progress",)),
     )
 
     inspector = inspect(connection)
@@ -36,11 +37,15 @@ def _normalize_legacy_session_statuses(connection) -> None:
             legacy_values = ", ".join(f"'{status}'" for status in legacy_statuses)
             connection.execute(text(
                 f'UPDATE "{table_name}" SET status = \'{current_status}\' '
-                f"WHERE status IN ({legacy_values})"
+                f"WHERE CAST(status AS TEXT) IN ({legacy_values})"
             ))
 
 
-def init_db(db: Session = None) -> None:
+def _is_legacy_string_column(column_type) -> bool:
+    return isinstance(column_type, String) and not isinstance(column_type, SAEnum)
+
+
+def init_db(db: Session = None, seed_base_data: bool = True) -> None:
     """Creates database schema tables, ensures migration columns exist, and seeds base roles without demo data."""
     Base.metadata.create_all(bind=engine)
 
@@ -87,6 +92,11 @@ def init_db(db: Session = None) -> None:
                     "faculty_members": "JSON",
                     "faculty_assigned_text": "VARCHAR(500)",
                     "schedule_complete": "BOOLEAN DEFAULT FALSE NOT NULL",
+                    # Reapproval tracking fields
+                    "reapproval_count": "INTEGER DEFAULT 0 NOT NULL",
+                    "last_reapproval_at": "TIMESTAMPTZ",
+                    "last_reapproval_by": "UUID REFERENCES users(id) ON DELETE SET NULL",
+                    "reapproval_changes": "JSON",
                 },
                 # The planned curriculum only. Delivery facts (faculty, topic,
                 # hours, feedback, outcomes) live on faculty_utilization and
@@ -103,6 +113,9 @@ def init_db(db: Session = None) -> None:
                     "feedback_submitted": "BOOLEAN DEFAULT FALSE NOT NULL",
                     "feedback_rating": "NUMERIC(3, 2)",
                     "feedback_notes": "TEXT",
+                    "outcome_reason": "TEXT",
+                    "outcome_at": "TIMESTAMPTZ",
+                    "outcome_by": "UUID REFERENCES users(id) ON DELETE SET NULL",
                     "vertical": "VARCHAR(50)",
                     "program_type_id": "UUID REFERENCES program_types(id) ON DELETE SET NULL",
                     "faculty_type_id": "UUID REFERENCES faculty_types(id) ON DELETE SET NULL",
@@ -115,6 +128,7 @@ def init_db(db: Session = None) -> None:
                 "batches": [
                     ("ix_batches_status", ["status"]),
                     ("ix_batches_start_date", ["start_date"]),
+                    ("ix_batches_last_reapproval_by", ["last_reapproval_by"]),
                 ],
                 "training_sessions": [
                     ("ix_training_sessions_batch_id", ["batch_id"]),
@@ -143,11 +157,11 @@ def init_db(db: Session = None) -> None:
                         ))
 
             # Migrate batch status columns to enum types if they exist as strings
-            if inspector.has_table("batches"):
+            if engine.dialect.name == "postgresql" and inspector.has_table("batches"):
                 batch_columns = {column["name"]: column["type"] for column in inspector.get_columns("batches")}
                 
                 # Check if status column is string type (needs migration to enum)
-                if "status" in batch_columns and "VARCHAR" in str(batch_columns["status"]).upper():
+                if "status" in batch_columns and _is_legacy_string_column(batch_columns["status"]):
                     # Create enum type if not exists
                     conn.execute(text("""
                         DO $$ BEGIN
@@ -238,10 +252,20 @@ def init_db(db: Session = None) -> None:
                     ))
             conn.commit()
     except Exception as e:
-        print(f"Note: Column migration check returned: {e}")
+        raise RuntimeError("Database schema initialization failed") from e
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            for enum_value in ("InProgress", "Cancelled", "NotConducted", "Rescheduled"):
+                conn.execute(text(
+                    f"ALTER TYPE sessionstatus ADD VALUE IF NOT EXISTS '{enum_value}'"
+                ))
 
     with engine.begin() as conn:
         _normalize_legacy_session_statuses(conn)
+
+    if not seed_base_data:
+        return
 
     if db is None:
         db = SessionLocal()

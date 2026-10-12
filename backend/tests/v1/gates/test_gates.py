@@ -1,9 +1,35 @@
 from decimal import Decimal
+from datetime import date, datetime, timezone
 
 from app.models.batch import Batch
+from app.models.batch_edit import BatchEditHistory
+from app.models.session import FacultyUtilization, SessionStatus, TrainingSession
 
 
-def test_gate1_session_feedback_success(client, coord_token_headers):
+def test_gate1_session_feedback_success(client, coord_token_headers, db_session):
+    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    scheduled = TrainingSession(
+        batch_id=batch.id,
+        session_date=date.today(),
+        module="AsyncIO",
+        trainer_name="Test Faculty",
+        status=SessionStatus.Scheduled,
+    )
+    db_session.add(scheduled)
+    db_session.flush()
+    utilization = FacultyUtilization(
+        batch_id=batch.id,
+        training_session_id=scheduled.id,
+        faculty_name="Test Faculty",
+        date_of_training=datetime.now(timezone.utc),
+        topic="AsyncIO",
+        no_of_hours=Decimal("8.0"),
+        mode_of_delivery="Online",
+        status=SessionStatus.Scheduled,
+    )
+    db_session.add(utilization)
+    db_session.commit()
+
     feedback_payload = {
         "rating": "4.8",
         "topic_feedback": "Excellent engagement on AsyncIO coroutines.",
@@ -12,7 +38,7 @@ def test_gate1_session_feedback_success(client, coord_token_headers):
     }
 
     response = client.patch(
-        "/api/v1/sessions/mock-session-id-123/complete",
+        f"/api/v1/sessions/{utilization.id}/complete",
         json=feedback_payload,
         headers=coord_token_headers
     )
@@ -21,6 +47,9 @@ def test_gate1_session_feedback_success(client, coord_token_headers):
     data = response.json()
     assert data["status"] == "Completed"
     assert data["feedback_submitted"] is True
+    assert data["topic_feedback"].startswith("Excellent engagement")
+    db_session.refresh(scheduled)
+    assert scheduled.status == SessionStatus.Completed
 
 
 def test_gate1_invalid_rating_rejected(client, coord_token_headers):
@@ -45,6 +74,12 @@ def test_gate2_batch_nps_closure(client, coord_token_headers, db_session):
     Checkpoint 1 precondition is satisfied and the average must be left
     untouched."""
     batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    db_session.add(BatchEditHistory(
+        batch_id=batch.id,
+        edited_by=batch.coordinator_id,
+        changed_fields={"training_days": {"before": 4, "after": 5}},
+    ))
+    db_session.commit()
 
     nps_payload = {
         "promoters_count": 35,
@@ -70,6 +105,7 @@ def test_gate2_batch_nps_closure(client, coord_token_headers, db_session):
     assert data["nps_detractors"] == 2
     # Gate 2 is sequenced after Gate 1 but never writes the average.
     assert float(data["batch_avg_feedback"]) == 4.5
+    assert db_session.query(BatchEditHistory).filter_by(batch_id=batch.id).count() == 0
 
 
 def test_gate2_blocked_until_gate1_complete(client, coord_token_headers, db_session):
@@ -101,6 +137,55 @@ def test_gate2_rejects_zero_responses(client, coord_token_headers, db_session):
     )
 
     assert response.status_code == 422
+
+
+def test_gate2_accepts_cancelled_and_not_conducted_sessions(client, coord_token_headers, db_session):
+    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    db_session.add(TrainingSession(
+        batch_id=batch.id,
+        session_date=date.today(),
+        module="Cancelled module",
+        status=SessionStatus.Cancelled,
+    ))
+    db_session.add(FacultyUtilization(
+        batch_id=batch.id,
+        faculty_name="Test Faculty",
+        date_of_training=datetime.now(timezone.utc),
+        topic="Not conducted module",
+        no_of_hours=Decimal("8.0"),
+        mode_of_delivery="Online",
+        status=SessionStatus.NotConducted,
+    ))
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/close",
+        json={"promoters_count": 1, "passive_count": 0, "detractors_count": 0},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "Completed"
+
+
+def test_gate2_rejects_nonterminal_sessions(client, coord_token_headers, db_session):
+    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    db_session.add(TrainingSession(
+        batch_id=batch.id,
+        session_date=date.today(),
+        module="Still scheduled",
+        status=SessionStatus.Scheduled,
+    ))
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/close",
+        json={"promoters_count": 1, "passive_count": 0, "detractors_count": 0},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 409
+    assert "terminal outcome" in response.json()["detail"]
 
 
 def test_gate2_rejects_client_supplied_nps(client, coord_token_headers, db_session):

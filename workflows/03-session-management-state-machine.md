@@ -47,8 +47,8 @@
 ## State Transitions
 
 ### TrainingSession
-- `Scheduled` → `Completed` (when linked utilization is marked Completed)
-- Any → `Cancelled` / `Not Conducted` (batch cancellation cascade)
+- `Scheduled` → `Completed` (when linked utilization is completed through Gate 1)
+- `Scheduled`/`InProgress` → `Cancelled` / `Not Conducted` (batch cancellation cascade)
 - `Scheduled` → `Rescheduled` (date/time change)
 
 ### FacultyUtilization
@@ -80,7 +80,8 @@
 **Conditions:**
 - Batch must exist
 - User has operational scope on batch
-- `training_session_id` required if `status="Completed"`
+- New delivery starts in `Scheduled`; a session can only become `Completed` through Gate 1
+- `training_session_id` required to complete a delivery
 - Time window valid: `end_time > start_time`
 - `outcome_reason` required if status is `Cancelled` or `Not Conducted`
 
@@ -93,7 +94,7 @@
 2. Validate time window
 3. If `outcome_reason` provided without `outcome_by`, auto-set `outcome_by=user_id`, `outcome_at=now`
 4. Create `FacultyUtilization` record
-5. If linked to `TrainingSession` and `status="Completed"`, mark scheduled session `Completed`
+5. Keep linked timetable outcomes synchronized; only Gate 1 may mark a delivery Completed
 6. Trigger `batch_avg_feedback` calculation
 
 ## Update Session
@@ -109,8 +110,8 @@
 - Session date must be within batch `start_date` to `end_date`
 
 **Flow:**
-1. Apply updates
-2. If status changes to `Completed` and linked to scheduled session, mark scheduled session `Completed`
+1. Validate and apply permitted updates (`Completed` is reserved for Gate 1)
+2. Synchronize linked timetable outcome for Cancelled or Not Conducted
 3. Trigger `batch_avg_feedback` calculation
 
 ## Cancel Session
@@ -125,7 +126,7 @@
 1. Set `status="Cancelled"`
 2. Set `outcome_reason`, `outcome_at=now`, `outcome_by=user_id`
 3. Sync linked `TrainingSession` to `Cancelled`
-4. Check if batch can be auto-completed
+4. Recalculate batch feedback; batch closure remains subject to Gate 2
 
 ## Mark Not Conducted
 
@@ -162,12 +163,9 @@ Same as Cancel but sets `status="Not Conducted"`.
 3. Sync linked `TrainingSession` to `Completed`
 4. Trigger `batch_avg_feedback` calculation (calculates if at least one rating exists)
 
-## Batch Auto-Completion
+## Batch Completion
 
-After any session transition, `_check_and_update_batch_completion` runs:
-- If ALL sessions (scheduled + logged) are terminal
-- And batch is not `Completed` or `Cancelled`
-- Then set `batch.status="Completed"`
+Session outcomes do not automatically complete a batch. Once all scheduled and logged sessions have terminal outcomes and at least one rated delivery has populated `batch_avg_feedback`, an authorized user must complete Gate 2 with NPS response counts to set the batch to `Completed`.
 
 ## Validation Rules Summary
 

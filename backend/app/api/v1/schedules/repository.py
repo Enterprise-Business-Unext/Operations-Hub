@@ -37,7 +37,7 @@ class ScheduleRepository(IScheduleRepository):
         ).all()
 
     def get_scheduled_session_count(self, batch_id: UUID) -> int:
-        return self.db.query(func.count(func.distinct(TrainingSession.session_date))).filter(
+        return self.db.query(func.count(TrainingSession.id)).filter(
             TrainingSession.batch_id == batch_id
         ).scalar() or 0
 

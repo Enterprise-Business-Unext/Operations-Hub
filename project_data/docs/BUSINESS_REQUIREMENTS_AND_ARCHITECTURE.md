@@ -227,13 +227,16 @@ erDiagram
         string topic
         uuid faculty_id FK
         decimal no_of_hours
-        decimal module_feedback
+        decimal feedback_rating
+        text feedback_notes
         string venue
         string location_city
         string mode_of_delivery
         string coordinator_name
         timestamptz created_at
     }
+
+    %% module_feedback is a read-only alias of feedback_notes (see db_scheme/schema.dbml)
 
     BATCH_FEEDBACK {
         uuid id PK

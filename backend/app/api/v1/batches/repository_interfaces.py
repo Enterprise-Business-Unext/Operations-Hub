@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.models.batch import ApprovalConfiguration, Batch
+from app.models.batch_edit import BatchEditHistory
 from app.models.session import FacultyUtilization, TrainingSession
 
 
@@ -86,11 +87,16 @@ class IBatchRepository(ABC):
 
     @abstractmethod
     def get_scheduled_session_counts(self, batch_ids: Sequence[UUID]) -> Dict[UUID, int]:
-        """Timetable rows per batch."""
+        """Distinct scheduled training dates per batch."""
         pass
 
     @abstractmethod
     def list_scheduled_sessions_on_date(self, batch_ids: Sequence[UUID], target_date: date) -> List[TrainingSession]:
+        pass
+
+    @abstractmethod
+    def list_scheduled_sessions_after(self, batch_id: UUID, after_date: date) -> List[TrainingSession]:
+        """Timetable rows scheduled strictly after ``after_date``, oldest first."""
         pass
 
     @abstractmethod
@@ -194,6 +200,14 @@ class IBatchRepository(ABC):
 
     @abstractmethod
     def refresh(self, instance) -> None:
+        pass
+
+    @abstractmethod
+    def add_edit_history(self, entry: BatchEditHistory) -> None:
+        pass
+
+    @abstractmethod
+    def list_edit_history(self, batch_id: UUID) -> List[BatchEditHistory]:
         pass
 
 

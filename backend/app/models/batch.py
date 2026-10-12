@@ -82,6 +82,19 @@ class Batch(Base):
     approver_1 = relationship("User", foreign_keys=[approver_1_id])
     approver_2 = relationship("User", foreign_keys=[approver_2_id])
 
+    # Reapproval Tracking
+    reapproval_count = Column(Integer, default=0, nullable=False)
+    last_reapproval_at = Column(DateTime(timezone=True), nullable=True)
+    last_reapproval_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    reapproval_changes = Column(JSON, nullable=True)
+
+    # Reapproval relationship
+    last_reapproval_by_user = relationship("User", foreign_keys=[last_reapproval_by])
+
+    @property
+    def is_reapproval(self) -> bool:
+        return (self.reapproval_count or 0) > 0
+
     # Ownership & Operational Roles
     primary_manager_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     coordinator_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)

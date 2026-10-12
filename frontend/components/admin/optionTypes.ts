@@ -4,6 +4,7 @@ export type OptionTypeKey =
   | "accommodations"
   | "entities"
   | "faculty-types"
+  | "program-types"
   | "verticals";
 
 export const OPTION_TYPE_LABELS: Record<OptionTypeKey, string> = {
@@ -12,6 +13,7 @@ export const OPTION_TYPE_LABELS: Record<OptionTypeKey, string> = {
   accommodations: "Accommodations",
   entities: "Legal Entities",
   "faculty-types": "Faculty Types",
+  "program-types": "Program Types",
   verticals: "Verticals",
 };
 

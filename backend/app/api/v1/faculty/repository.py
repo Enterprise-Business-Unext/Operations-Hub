@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.models.session import FacultyUtilization
+from app.models.session import ACTIVE_UTILIZATION_STATUSES, FacultyUtilization
 from app.models.batch import Batch, FacultyType
 from app.api.v1.faculty.repository_interfaces import IFacultyRepository
 
@@ -20,17 +20,22 @@ class FacultyRepository(IFacultyRepository):
         ).order_by(User.full_name.asc()).all()
 
     def get_distinct_deployed_faculty_names(self) -> List[str]:
-        rows = self.db.query(FacultyUtilization.faculty_name).distinct().all()
+        rows = self.db.query(FacultyUtilization.faculty_name).filter(
+            FacultyUtilization.status.in_(ACTIVE_UTILIZATION_STATUSES),
+        ).distinct().all()
         return [row[0] for row in rows if row[0]]
 
     def list_non_cancelled_deliveries(self) -> List[FacultyUtilization]:
-        return self.db.query(FacultyUtilization).all()
+        return self.db.query(FacultyUtilization).filter(
+            FacultyUtilization.status.in_(ACTIVE_UTILIZATION_STATUSES),
+        ).all()
 
     def list_non_cancelled_deliveries_for_domain(self, domain: str) -> List[FacultyUtilization]:
         return self.db.query(FacultyUtilization).join(
             Batch, FacultyUtilization.batch_id == Batch.id
         ).filter(
             Batch.domain.ilike(f"%{domain}%"),
+            FacultyUtilization.status.in_(ACTIVE_UTILIZATION_STATUSES),
         ).all()
 
     def list_utilization_for_export(

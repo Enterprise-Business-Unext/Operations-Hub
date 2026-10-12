@@ -286,6 +286,12 @@ class BatchResponse(BaseModel):
     schedule_complete: bool = False
     created_at: datetime
     updated_at: datetime
+    # Reapproval fields
+    reapproval_count: int = 0
+    is_reapproval: bool = False
+    last_reapproval_at: Optional[datetime] = None
+    last_reapproval_by: Optional[UUID] = None
+    reapproval_changes: Optional[dict[str, dict[str, Any]]] = None
 
     @field_validator("faculty_members", mode="before")
     @classmethod
@@ -308,6 +314,17 @@ class BatchDetailResponse(BatchResponse):
     primary_manager: Optional[UserResponse] = None
     coordinator: Optional[UserResponse] = None
     sales_spoc: Optional[UserResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchEditHistoryResponse(BaseModel):
+    id: UUID
+    batch_id: UUID
+    edited_by: Optional[UUID] = None
+    editor_name: Optional[str] = None
+    changed_fields: dict[str, dict[str, Any]]
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

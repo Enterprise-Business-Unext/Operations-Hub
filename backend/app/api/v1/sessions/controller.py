@@ -2,7 +2,7 @@ from typing import List, Optional, Any
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
@@ -10,6 +10,7 @@ from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionDetailResponse,
     TrainingSessionResponse,
     TrainingSessionUpdate, TrainingSessionCreate,
+    SessionCancelRequest, SessionRescheduleRequest,
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.deps_services import get_session_service
@@ -38,6 +39,17 @@ def update_scheduled_session(
 ) -> Any:
     """Correct a parsed curriculum row after it has been saved."""
     return service.update_scheduled(id, session_in, current_user.id)
+
+
+@router.delete("/scheduled/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scheduled_session(
+    id: UUID,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Response:
+    """Delete an undelivered curriculum timetable entry."""
+    service.delete_scheduled(id, current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/scheduled", response_model=TrainingSessionResponse, status_code=status.HTTP_201_CREATED)
@@ -86,6 +98,43 @@ def update_session(
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
     return service.update(id, session_in, current_user.id)
+
+
+@router.post("/{id}/cancel", response_model=SessionDetailResponse)
+def cancel_session(
+    id: UUID,
+    payload: SessionCancelRequest,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.cancel(id, payload.reason, current_user.id)
+
+
+@router.post("/{id}/not-conducted", response_model=SessionDetailResponse)
+def mark_session_not_conducted(
+    id: UUID,
+    payload: SessionCancelRequest,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.mark_not_conducted(id, payload.reason, current_user.id)
+
+
+@router.post("/{id}/reschedule", response_model=SessionDetailResponse)
+def reschedule_session(
+    id: UUID,
+    payload: SessionRescheduleRequest,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.reschedule(
+        id,
+        payload.date_of_training,
+        payload.start_time,
+        payload.end_time,
+        payload.reason,
+        current_user.id,
+    )
 
 
 @router.patch("/{id}/complete")

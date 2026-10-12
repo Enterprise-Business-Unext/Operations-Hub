@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta, date
+from decimal import Decimal
 import json
 from typing import List, Optional
 from uuid import UUID
@@ -14,7 +15,9 @@ from app.models.batch import (
     DeliveryMode,
     Entity,
 )
+from app.models.batch_edit import BatchEditHistory
 from app.models.user import User
+from app.models.session import SessionStatus
 from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreateRequest, BatchUpdateRequest, ActiveBatchesResponse
 from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.v1.auth.repository_interfaces import IUserRepository
@@ -23,6 +26,30 @@ from app.api.v1.gates.service import GatekeeperService
 
 
 class BatchService:
+    REAPPROVAL_FIELDS = {
+        "sow_number",
+        "category",
+        "entity_id",
+        "category_id",
+        "delivery_mode_id",
+        "accommodation_id",
+        "program_name",
+        "technology",
+        "domain",
+        "client_name",
+        "location_city",
+        "start_date",
+        "end_date",
+        "training_days",
+        "total_hours",
+        "total_enrollments",
+        "primary_manager_id",
+        "coordinator_id",
+        "sales_spoc_id",
+        "faculty_assigned_text",
+        "faculty_members",
+    }
+
     def __init__(
         self,
         batch_repo: IBatchRepository,
@@ -56,6 +83,30 @@ class BatchService:
         self.batch_repo.commit()
         self.batch_repo.refresh(batch)
         return batch
+
+    @staticmethod
+    def _history_value(value):
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, datetime):
+            normalized = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+            return normalized.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(key): BatchService._history_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [BatchService._history_value(item) for item in value]
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+            if isinstance(parsed, (list, dict)):
+                return BatchService._history_value(parsed)
+        return value
 
     @staticmethod
     def _as_utc(value):
@@ -221,6 +272,10 @@ class BatchService:
             batch.is_schema_locked = True
             if decision.reason and not batch.approval_id and len(decision.reason.strip()) <= 100:
                 batch.approval_id = decision.reason.strip()
+
+            # Clear reapproval_changes when reapproval cycle completes
+            if (batch.reapproval_count or 0) > 0:
+                batch.reapproval_changes = None
 
             # Auto-transition based on start_date
             today = datetime.now(timezone.utc).date()
@@ -467,6 +522,56 @@ class BatchService:
         batch = self.get(batch_id, current_user)
         self._require_operational_scope(batch, current_user)
         update_data = batch_in.model_dump(exclude_unset=True)
+        if "training_days" in update_data and update_data["training_days"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="training_days cannot be null.",
+            )
+        if "training_days" in update_data:
+            scheduled_days = self.batch_repo.get_scheduled_session_counts([batch.id]).get(batch.id, 0)
+            if update_data["training_days"] < scheduled_days:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"training_days cannot be less than the {scheduled_days} "
+                        "scheduled sessions already in the timetable."
+                    ),
+                )
+        if (
+            "end_date" in update_data
+            and update_data["end_date"] is not None
+            and batch.end_date is not None
+            and BatchService._as_utc(update_data["end_date"]).date()
+            < BatchService._as_utc(batch.end_date).date()
+        ):
+            new_end = BatchService._as_utc(update_data["end_date"]).date()
+            offending = self.batch_repo.list_scheduled_sessions_after(batch.id, new_end)
+            if offending:
+                preview = "; ".join(
+                    f"{session.session_date.isoformat()} '{session.module}'"
+                    for session in offending[:3]
+                )
+                if len(offending) > 3:
+                    preview = f"{preview} and {len(offending) - 3} more"
+                detail = (
+                    f"Cannot reduce end_date to {new_end.isoformat()}: {len(offending)} "
+                    f"scheduled session(s) fall after it ({preview}). Delete them from the "
+                    "Curriculum Schedule first."
+                )
+                undeliverable = [
+                    session
+                    for session in offending
+                    if session.status == SessionStatus.Completed or len(session.utilizations) > 0
+                ]
+                if undeliverable:
+                    detail += (
+                        f" {len(undeliverable)} of these are completed or have a logged "
+                        "delivery and cannot be deleted; the end date cannot be reduced past them."
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=detail,
+                )
         finance_fields = {"finance_status", "finance_status_check_date", "finance_check"}
         if finance_fields.intersection(update_data):
             team_name = current_user.team_detail.name if current_user.team_detail else ""
@@ -486,6 +591,32 @@ class BatchService:
             if delivery_mode_id or delivery_mode_val:
                 update_data["delivery_mode_id"] = self._option_id(DeliveryMode, delivery_mode_id, delivery_mode_val or "Online")
 
+        # Ceiling check mirrors the create rule, but fires only when the pair
+        # actually changes: the edit modal always sends the full form, so a
+        # presence-based trigger would make batches with a legacy-violating
+        # stored pair permanently uneditable.
+        stored_days = batch.training_days or 0
+        stored_hours = batch.total_hours or Decimal("0.00")
+        eff_days = update_data["training_days"] if "training_days" in update_data else stored_days
+        eff_hours = (
+            Decimal(str(update_data["total_hours"]))
+            if "total_hours" in update_data and update_data["total_hours"] is not None
+            else Decimal(str(stored_hours))
+        )
+        if eff_days != stored_days or eff_hours != Decimal(str(stored_hours)):
+            max_hours = self.batch_repo.get_delivery_mode_max_hours(
+                update_data.get("delivery_mode_id") or batch.delivery_mode_id,
+                batch.delivery_mode,
+            ) or 8
+            if eff_hours > eff_days * max_hours:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Total hours cannot exceed training_days × max_hours_per_day "
+                        f"({eff_days} × {max_hours} = {eff_days * max_hours})"
+                    ),
+                )
+
         # Handle faculty_members JSON serialization
         if "faculty_members" in update_data:
             update_data["faculty_members"] = json.dumps(update_data["faculty_members"])
@@ -495,45 +626,83 @@ class BatchService:
             for field in restricted.intersection(update_data):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Batch schema is locked. Modifying '{field}' requires Manager or Admin authorization.")
 
-        # Check if schedule fields are being modified on a schema-locked batch in active status
-        schedule_trigger_fields = {"training_days", "end_date", "start_date", "total_hours"}
-        active_statuses = {"Upcoming", "Ongoing", "Pending for Closure"}
-        should_trigger_reapproval = (
-            batch.is_schema_locked
-            and batch.status in active_statuses
-            and (current_user.role or "").lower() == "coordinator"
-            and schedule_trigger_fields.intersection(update_data)
-        )
-
-        for field, value in update_data.items():
-            setattr(batch, field, value)
-        batch.updated_at = datetime.now(timezone.utc)
-
+        changed_fields = {
+            field: {
+                "before": self._history_value(getattr(batch, field)),
+                "after": self._history_value(value),
+            }
+            for field, value in update_data.items()
+            if field in self.REAPPROVAL_FIELDS
+            and self._history_value(getattr(batch, field)) != self._history_value(value)
+        }
+        should_trigger_reapproval = bool(changed_fields)
+        if should_trigger_reapproval and batch.status in {"Completed", "Cancelled"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Completed or cancelled batches cannot be changed.",
+            )
         if should_trigger_reapproval:
             config = self.get_approval_config()
             if not config.approver_1_id or not config.approver_2_id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Both approvers must be configured before schedule changes can trigger re-approval."
+                    detail="Both approvers must be configured before batch changes can trigger re-approval."
                 )
+
+        has_effective_changes = any(
+            self._history_value(getattr(batch, field)) != self._history_value(value)
+            for field, value in update_data.items()
+        )
+        
+        # Store changed_fields for notification and reapproval tracking
+        batch._changed_fields_for_reapproval = changed_fields if should_trigger_reapproval else None
+        batch._reapproval_triggered = should_trigger_reapproval
+        
+        if not has_effective_changes:
+            return batch
+
+        for field, value in update_data.items():
+            setattr(batch, field, value)
+
+        batch.updated_at = datetime.now(timezone.utc)
+
+        if should_trigger_reapproval:
+            # Increment reapproval count and set tracking fields
+            batch.reapproval_count = (batch.reapproval_count or 0) + 1
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            batch.last_reapproval_at = datetime.now(ist_tz)
+            batch.last_reapproval_by = current_user.id
+            batch.reapproval_changes = changed_fields
+            
             batch.is_schema_locked = False
             batch.approver_1_status = "Pending"
             batch.approver_2_status = "Pending"
             batch.approver_1_id = config.approver_1_id
             batch.approver_2_id = config.approver_2_id
+            batch.approver_1_approved_at = None
+            batch.approver_2_approved_at = None
             batch.approval_id = None
             batch.status = "Approval 1 Pending"
             ist_tz = timezone(timedelta(hours=5, minutes=30))
             timestamp = datetime.now(ist_tz).strftime("%d-%m-%Y %H:%M IST")
             actor_name = current_user.full_name or current_user.email
             audit_entry = (
-                f"[{timestamp} - Schedule changed by {actor_name} ({current_user.role or 'User'})]: "
-                f"Batch reset to Approval 1 Pending due to schedule field modification(s): "
-                f"{', '.join(sorted(schedule_trigger_fields.intersection(update_data)))}"
+                f"[{timestamp} - Batch changed by {actor_name} ({current_user.role or 'User'})]: "
+                f"Batch reset to Approval 1 Pending due to change(s): "
+                f"{', '.join(sorted(changed_fields))}"
             )
             batch.remarks = f"{batch.remarks}\n{audit_entry}" if batch.remarks else audit_entry
+            self.batch_repo.add_edit_history(BatchEditHistory(
+                batch_id=batch.id,
+                edited_by=current_user.id,
+                changed_fields=changed_fields,
+            ))
 
         return self._save(batch)
+
+    def get_edit_history(self, batch_id: UUID, current_user: User) -> List[BatchEditHistory]:
+        self.get(batch_id, current_user)
+        return self.batch_repo.list_edit_history(batch_id)
 
     # Valid lifecycle status transitions
     # Key: current_status -> Set of allowed next statuses
@@ -586,6 +755,12 @@ class BatchService:
         else:
             target_status = new_status
 
+        if target_status == "Completed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Batches can only be completed through Gate 2 NPS closure.",
+            )
+
         # Validate transition is allowed
         allowed_next = self.VALID_TRANSITIONS.get(current_status, set())
         if target_status not in allowed_next:
@@ -630,16 +805,19 @@ class BatchService:
         batch.status = target_status
         batch.updated_at = datetime.now(timezone.utc)
 
-        # Cascade cancellation to all sessions so a cancelled batch stops counting
-        # as delivered faculty time. Sessions revert to Scheduled (not Completed).
+        # Keep session outcomes consistent with the batch-level cancellation.
         if target_status == "Cancelled":
+            now = datetime.now(timezone.utc)
             for fs in self.batch_repo.list_non_terminal_faculty_sessions(batch.id):
-                fs.status = "Scheduled"
-                fs.updated_at = datetime.now(timezone.utc)
+                fs.status = SessionStatus.Cancelled
+                fs.outcome_reason = reason.strip()
+                fs.outcome_at = now
+                fs.outcome_by = current_user.id
+                fs.updated_at = now
 
             for ts in self.batch_repo.list_non_terminal_training_sessions(batch.id):
-                ts.status = "Scheduled"
-                ts.updated_at = datetime.now(timezone.utc)
+                ts.status = SessionStatus.Cancelled
+                ts.updated_at = now
 
         return self._save(batch)
 

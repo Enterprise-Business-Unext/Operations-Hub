@@ -18,6 +18,7 @@ from app.models.batch import (
     ProgramType,
 )
 from app.models.session import TrainingSession, FacultyUtilization
+from app.models.batch_edit import BatchEditHistory
 
 # Every mapped class must be imported here. `alembic/env.py` and revision
 # 0001's `Base.metadata.create_all()` both rely on this module to populate
@@ -41,4 +42,5 @@ __all__ = [
     "ProgramType",
     "TrainingSession",
     "FacultyUtilization",
+    "BatchEditHistory",
 ]

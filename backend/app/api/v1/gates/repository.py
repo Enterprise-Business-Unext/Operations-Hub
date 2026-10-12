@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
+from app.models.batch_edit import BatchEditHistory
 from app.models.session import FacultyUtilization, TrainingSession
 from app.api.v1.gates.repository_interfaces import IGateRepository
 
@@ -25,6 +26,11 @@ class GateRepository(IGateRepository):
         planned = self.db.query(TrainingSession).filter(TrainingSession.batch_id == batch_id).all()
         actual = self.db.query(FacultyUtilization).filter(FacultyUtilization.batch_id == batch_id).all()
         return [planned, actual]
+
+    def delete_batch_edit_history(self, batch_id: UUID) -> None:
+        self.db.query(BatchEditHistory).filter(
+            BatchEditHistory.batch_id == batch_id
+        ).delete(synchronize_session=False)
 
     def commit(self) -> None:
         self.db.commit()

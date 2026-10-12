@@ -5,7 +5,12 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, TrainingSession, SessionStatus
+from app.models.session import (
+    FacultyUtilization,
+    SessionStatus,
+    TERMINAL_UTILIZATION_STATUSES,
+    TrainingSession,
+)
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
@@ -20,6 +25,25 @@ from app.api.v1.sessions.repository_interfaces import ISessionRepository
 
 
 class SessionService:
+    TERMINAL_STATUSES = TERMINAL_UTILIZATION_STATUSES
+    TRAINING_DAYS_LIMIT_DETAIL = (
+        "Scheduled session count cannot exceed training_days. Extend the batch end date and update "
+        "training days and total hours, then submit the batch changes for reapproval."
+    )
+    ALLOWED_TRANSITIONS = {
+        SessionStatus.Scheduled: {
+            SessionStatus.Scheduled,
+            SessionStatus.InProgress,
+            SessionStatus.Cancelled,
+            SessionStatus.NotConducted,
+        },
+        SessionStatus.InProgress: {
+            SessionStatus.InProgress,
+            SessionStatus.Cancelled,
+            SessionStatus.NotConducted,
+        },
+    }
+
     def __init__(
         self,
         session_repo: ISessionRepository,
@@ -32,20 +56,31 @@ class SessionService:
         self.lifecycle_service = lifecycle_service
         self.gatekeeper = gatekeeper
 
-    def _check_and_update_batch_completion(self, batch_id: UUID) -> None:
-        """Mark the batch Completed once every session (scheduled + logged) is terminal."""
-        all_sessions = self.session_repo.list_all_sessions_for_batch(batch_id)
-        if not all_sessions:
-            return
-        TERMINAL_STATUSES = {SessionStatus.Completed}
-        if not all(session.status in TERMINAL_STATUSES for session in all_sessions):
-            return
+    @staticmethod
+    def _validate_batch_date(batch: Batch, session_date: datetime) -> None:
+        training_date = session_date.date()
+        if batch.start_date and training_date < batch.start_date.date():
+            raise HTTPException(status_code=422, detail="Session date is before the batch start date")
+        if batch.end_date and training_date > batch.end_date.date():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Session date is after the batch end date. Extend the batch end date and "
+                    "update training days and total hours, then submit the batch changes for reapproval."
+                ),
+            )
 
-        batch = self.session_repo.get_batch_by_id(batch_id)
-        if batch and batch.status not in ("Completed", "Cancelled"):
-            batch.status = "Completed"
-            batch.updated_at = datetime.now(timezone.utc)
-            self.session_repo.commit()
+    @staticmethod
+    def _record_outcome(session: FacultyUtilization, reason: Optional[str], user_id: Optional[UUID]) -> None:
+        clean_reason = reason.strip() if reason else ""
+        if len(clean_reason) < 3:
+            raise HTTPException(
+                status_code=422,
+                detail="An outcome reason of at least 3 characters is required",
+            )
+        session.outcome_reason = clean_reason
+        session.outcome_at = datetime.now(timezone.utc)
+        session.outcome_by = user_id
 
     def list(self, batch_id: Optional[UUID], faculty_name: Optional[str], status_filter: Optional[str], user_id: Optional[UUID] = None) -> List[FacultyUtilization]:
         """Lists actual faculty delivery records (utilization ledger)."""
@@ -127,8 +162,26 @@ class SessionService:
             self._require_batch_scope(batch, user_id)
         if batch.status == "Completed":
             raise HTTPException(status_code=409, detail="Completed batches cannot be edited")
+        if batch.status == "Completed":
+            raise HTTPException(status_code=409, detail="Completed batches cannot be edited")
 
         updates = session_in.model_dump(exclude_unset=True)
+        if session.status == SessionStatus.Completed:
+            raise HTTPException(status_code=409, detail="Completed sessions cannot be changed")
+        if updates.get("status", session.status) != session.status:
+            raise HTTPException(
+                status_code=409,
+                detail="Scheduled session outcomes must be recorded through the linked utilization workflow",
+            )
+        self._validate_time_window(
+            updates.get("start_time", session.start_time),
+            updates.get("end_time", session.end_time),
+        )
+        target_date = updates.get("session_date", session.session_date)
+        self._validate_batch_date(
+            batch,
+            datetime.combine(target_date, time.min, tzinfo=timezone.utc),
+        )
         if "session_date" in updates and updates["session_date"]:
             session.day_name = updates["session_date"].strftime("%A")
         for field, value in updates.items():
@@ -144,13 +197,55 @@ class SessionService:
             raise HTTPException(status_code=404, detail="Batch not found")
         if user_id:
             self._require_batch_scope(batch, user_id)
+        if batch.status == "Completed":
+            raise HTTPException(status_code=409, detail="Completed batches cannot be edited")
+        self._validate_batch_date(
+            batch,
+            datetime.combine(session_in.session_date, time.min, tzinfo=timezone.utc),
+        )
+        if batch.training_days is not None:
+            scheduled_count = len(self.session_repo.list_scheduled_for_batch(batch.id))
+            if scheduled_count + 1 > batch.training_days:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"{self.TRAINING_DAYS_LIMIT_DETAIL} Current scheduled sessions: "
+                        f"{scheduled_count}; current training_days: {batch.training_days}."
+                    ),
+                )
         last_sequence = self.session_repo.get_max_sequence_number(batch.id)
         session = TrainingSession(
             **session_in.model_dump(exclude={"batch_id", "sequence_number"}),
             batch_id=batch.id,
             sequence_number=session_in.sequence_number or ((last_sequence or 0) + 1),
         )
+        session.status = SessionStatus(session.status)
         return self.session_repo.create_scheduled(session)
+
+    def delete_scheduled(self, session_id: UUID, user_id: Optional[UUID] = None) -> None:
+        session = self.session_repo.get_scheduled_by_id(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Scheduled session not found")
+        batch = self.session_repo.get_batch_by_id(session.batch_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if user_id:
+            self._require_batch_scope(batch, user_id)
+        if batch.status == "Completed":
+            raise HTTPException(status_code=409, detail="Completed batches cannot be edited")
+        if session.status == SessionStatus.Completed:
+            raise HTTPException(status_code=409, detail="Completed sessions cannot be deleted")
+        if self.session_repo.has_utilization_for_training_session(session.id):
+            raise HTTPException(
+                status_code=409,
+                detail="A scheduled session with a linked delivery record cannot be deleted.",
+            )
+
+        batch.schedule_complete = (
+            batch.training_days is not None
+            and len(self.session_repo.list_scheduled_for_batch(batch.id)) - 1 >= batch.training_days
+        )
+        self.session_repo.delete_scheduled(session)
 
     def _resolve_faculty(self, faculty_id: Optional[UUID], faculty_name: Optional[str]) -> tuple[Optional[User], str]:
         """Resolve the faculty user for a ledger row, plus the name to persist.
@@ -204,21 +299,32 @@ class SessionService:
             raise HTTPException(status_code=404, detail="Batch not found")
         if user_id:
             self._require_batch_scope(batch, user_id)
+        self._validate_batch_date(batch, session_in.date_of_training)
 
         session_dict = session_in.model_dump(exclude_unset=True)
+        session_dict["status"] = SessionStatus(
+            session_dict.get("status", SessionStatus.Scheduled.value)
+        )
         faculty, faculty_name = self._resolve_faculty(None, session_dict.get("faculty_name"))
         session_dict["faculty_name"] = faculty_name
 
         self._validate_time_window(session_in.start_time, session_in.end_time)
 
-        session = self.session_repo.create_utilization(FacultyUtilization(**session_dict))
+        training_session = None
+        if session_in.training_session_id:
+            training_session = self.session_repo.get_training_session_by_id(session_in.training_session_id)
+            if not training_session or training_session.batch_id != batch.id:
+                raise HTTPException(status_code=422, detail="Training session does not belong to this batch")
 
-        # If linked to a scheduled training session day and status is Completed, mark it Completed.
-        # The timetable has no feedback columns; the rating stays on this ledger row.
-        if session_in.training_session_id and session_in.status == SessionStatus.Completed.value:
-            sched = self.session_repo.get_training_session_by_id(session_in.training_session_id)
-            if sched:
-                sched.status = SessionStatus.Completed
+        session = FacultyUtilization(**session_dict)
+        if session.status in (SessionStatus.Cancelled, SessionStatus.NotConducted):
+            self._record_outcome(session, session_in.outcome_reason, user_id)
+        session = self.session_repo.create_utilization(session)
+
+        if training_session and session.status in self.TERMINAL_STATUSES:
+            training_session.status = session.status
+            training_session.updated_at = datetime.now(timezone.utc)
+            if session.status == SessionStatus.Completed:
                 self.session_repo.commit()
 
         # Check and update batch completion/feedback
@@ -243,33 +349,108 @@ class SessionService:
             update_dict.get("end_time", session.end_time),
         )
         target_date = update_dict.get("date_of_training", session.date_of_training)
-        if batch and batch.start_date and target_date.date() < batch.start_date.date():
-            raise HTTPException(status_code=422, detail="Session date is before the batch start date")
-        if batch and batch.end_date and target_date.date() > batch.end_date.date():
-            raise HTTPException(status_code=422, detail="Session date is after the batch end date")
+        if target_date is None:
+            raise HTTPException(status_code=422, detail="Session date cannot be empty")
+        if batch:
+            self._validate_batch_date(batch, target_date)
 
-        new_status = update_dict.get("status", session.status)
+        current_status = SessionStatus(session.status)
+        requested_status = update_dict.get("status")
+        new_status = SessionStatus(requested_status) if requested_status else current_status
+        if current_status == SessionStatus.Completed:
+            raise HTTPException(status_code=409, detail="Completed sessions cannot be changed")
+        if current_status in self.TERMINAL_STATUSES and new_status != current_status:
+            raise HTTPException(status_code=409, detail="Terminal sessions cannot be changed")
+        if new_status == SessionStatus.Completed and current_status != SessionStatus.Completed:
+            raise HTTPException(status_code=409, detail="Use Gate 1 to complete a session")
+        if new_status not in self.ALLOWED_TRANSITIONS.get(current_status, {current_status}):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot change session status from {current_status.value} to {new_status.value}",
+            )
+        if new_status in (SessionStatus.Cancelled, SessionStatus.NotConducted):
+            self._record_outcome(session, update_dict.get("outcome_reason"), user_id)
 
-        # Track if status is changing to Completed
-        was_completed = session.status == SessionStatus.Completed.value
-        will_be_completed = new_status == SessionStatus.Completed.value
+        training_session_id = update_dict.get("training_session_id", session.training_session_id)
+        if training_session_id:
+            linked = self.session_repo.get_training_session_by_id(training_session_id)
+            if not linked or linked.batch_id != session.batch_id:
+                raise HTTPException(status_code=422, detail="Training session does not belong to this batch")
 
         for field, value in update_dict.items():
             setattr(session, field, value)
+        session.status = new_status
         session.updated_at = datetime.now(timezone.utc)
         self.session_repo.commit()
         self.session_repo.refresh(session)
 
-        # If linked to a scheduled training session day and status changed to Completed, mark it Completed
-        if session.training_session_id and not was_completed and will_be_completed:
+        if session.training_session_id and new_status in self.TERMINAL_STATUSES:
             sched = self.session_repo.get_training_session_by_id(session.training_session_id)
             if sched:
-                sched.status = SessionStatus.Completed
+                sched.status = new_status
+                sched.updated_at = datetime.now(timezone.utc)
                 self.session_repo.commit()
 
         # Check and update batch completion/feedback
         self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
 
+        return session
+
+    def cancel(self, session_id: UUID, reason: str, user_id: UUID) -> FacultyUtilization:
+        return self.update(
+            session_id,
+            SessionUpdate(status=SessionStatus.Cancelled.value, outcome_reason=reason),
+            user_id,
+        )
+
+    def mark_not_conducted(self, session_id: UUID, reason: str, user_id: UUID) -> FacultyUtilization:
+        return self.update(
+            session_id,
+            SessionUpdate(status=SessionStatus.NotConducted.value, outcome_reason=reason),
+            user_id,
+        )
+
+    def reschedule(
+        self,
+        session_id: UUID,
+        date_of_training: datetime,
+        start_time: Optional[time],
+        end_time: Optional[time],
+        reason: str,
+        user_id: UUID,
+    ) -> FacultyUtilization:
+        session = self.session_repo.get_utilization_by_id(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        batch = self.session_repo.get_batch_by_id(session.batch_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        self._require_batch_scope(batch, user_id)
+        if session.status == SessionStatus.Completed:
+            raise HTTPException(status_code=409, detail="Completed sessions cannot be rescheduled")
+        self._validate_batch_date(batch, date_of_training)
+        self._validate_time_window(start_time, end_time)
+        self._record_outcome(session, reason, user_id)
+        session.date_of_training = date_of_training
+        session.start_time = start_time
+        session.end_time = end_time
+        session.status = SessionStatus.Scheduled
+        session.updated_at = datetime.now(timezone.utc)
+        self.session_repo.commit()
+
+        if session.training_session_id:
+            scheduled = self.session_repo.get_training_session_by_id(session.training_session_id)
+            if scheduled:
+                scheduled.session_date = date_of_training.date()
+                scheduled.start_time = start_time
+                scheduled.end_time = end_time
+                scheduled.day_name = date_of_training.strftime("%A")
+                scheduled.status = SessionStatus.Scheduled
+                scheduled.updated_at = datetime.now(timezone.utc)
+                self.session_repo.commit()
+
+        self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
+        self.session_repo.refresh(session)
         return session
 
     def _require_batch_scope(self, batch: Batch, user_id: UUID) -> None:

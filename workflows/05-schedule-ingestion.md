@@ -65,10 +65,21 @@ The system normalizes column headers to canonical field names:
 ### Preconditions
 - Batch must exist
 - User has operational scope on batch
-- Batch status must be in: `Approval 1 Pending`, `Approval 2 Pending`, `Approved`, `Upcoming`, `Ongoing`
-- Cannot apply to `Completed` or `Cancelled` batches
+- Schedule changes are allowed at any batch status except `Completed`
+
+When more scheduled sessions are needed than the approved `training_days`,
+update the batch end date, `training_days`, and `total_hours`; the business-field
+edit returns the batch to Approval 1 and records the before/after values for both
+approvers. Schedule changes may be added while reapproval is pending. A completed
+batch remains read-only for schedule changes; other status values, including
+Cancelled, do not block schedule changes.
 
 ### Per-Row Validation
+
+The schedule is limited by scheduled session rows, not distinct dates. Each row
+in `training_sessions` counts as one session, including multiple modules on the
+same date. Applying a schedule or editing the batch is rejected if the resulting
+session count would exceed `training_days`.
 
 | Rule | Condition | Error |
 |------|-----------|-------|
@@ -80,12 +91,12 @@ The system normalizes column headers to canonical field names:
 | Existing session | Same `(batch_id, session_date, module)` already in DB | "Matching session already exists for this batch" |
 | Overlap | Same faculty, same date, overlapping times in same upload | "Overlaps another uploaded session from row X" |
 
-## Missing Day Auto-Generation
+## Missing Session Auto-Generation
 
-If `batch.training_days > number of scheduled dates`:
+If `batch.training_days > number of scheduled sessions`:
 
 1. Requires `batch.faculty_assigned_text` to be set
-2. Fills missing weekdays (Mon-Fri) in batch date range
+2. Fills missing session slots using weekdays (Mon-Fri) in the batch date range
 3. Creates placeholder sessions with `module="Generated training day - details required"`
 4. If not enough weekdays available, returns error
 

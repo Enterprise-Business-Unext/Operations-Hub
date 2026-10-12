@@ -61,11 +61,20 @@ interface MyBatchesViewProps {
  * coordinator needs before they can ingest a timetable, and it is invisible
  * everywhere else in the product.
  */
-function ScheduleBadge({ count }: { count: number }) {
+function ScheduleBadge({ count, trainingDays }: { count: number; trainingDays: number }) {
   const scheduled = count > 0;
+  const overLimit = count > trainingDays;
   return (
-    <Badge variant={scheduled ? "success" : "destructive"} size="sm" className="normal-case tracking-normal">
-      {scheduled ? `${count} day${count === 1 ? "" : "s"}` : "Not scheduled"}
+    <Badge
+      variant={overLimit ? "destructive" : scheduled ? "success" : "destructive"}
+      size="sm"
+      className="normal-case tracking-normal"
+    >
+      {overLimit
+        ? `${count} / ${trainingDays} days`
+        : scheduled
+          ? `${count} day${count === 1 ? "" : "s"}`
+          : "Not scheduled"}
     </Badge>
   );
 }
@@ -243,7 +252,10 @@ function BatchRow({
       )}
       {columns.isVisible("schedule") && (
         <td style={CELL_STYLE}>
-          <ScheduleBadge count={batch.scheduled_session_count ?? 0} />
+          <ScheduleBadge
+            count={batch.scheduled_session_count ?? 0}
+            trainingDays={batch.training_days ?? 0}
+          />
         </td>
       )}
       {columns.isVisible("feedback") && (

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.batch import Batch
+from app.models.batch_edit import BatchEditHistory
 from app.models.session import TrainingSession
 from app.models.user import Team, User
 
@@ -353,6 +354,17 @@ def test_list_reports_scheduled_session_count(client, db_session, ownership_acto
                 status="Scheduled",
             )
         )
+    db_session.add(
+        TrainingSession(
+            batch_id=scheduled.id,
+            sequence_number=4,
+            session_date=first_day,
+            day_name="Day",
+            module="Second module on first day",
+            duration_hours=Decimal("2.0"),
+            status="Scheduled",
+        )
+    )
     db_session.commit()
 
     response = client.get("/api/v1/batches?mine=true", headers=_headers_for(coord))
@@ -360,7 +372,43 @@ def test_list_reports_scheduled_session_count(client, db_session, ownership_acto
     counts = {row["batch_id"]: row["scheduled_session_count"] for row in response.json()}
 
     assert counts["SCHED_NONE_2027"] == 0
-    assert counts["SCHED_THREE_2027"] == 3
+    assert counts["SCHED_THREE_2027"] == 4
+
+
+def test_cannot_reduce_training_days_below_scheduled_sessions(client, db_session, coord_token_headers):
+    batch = db_session.query(Batch).filter(
+        Batch.batch_id == "TEST_BATCH_PYTHON_001"
+    ).first()
+    batch.training_days = 2
+    first_day = datetime.now(timezone.utc).date() + timedelta(days=40)
+    db_session.add_all([
+        TrainingSession(
+            batch_id=batch.id,
+            sequence_number=1,
+            session_date=first_day,
+            module="Module one",
+            duration_hours=Decimal("8.0"),
+            status="Scheduled",
+        ),
+        TrainingSession(
+            batch_id=batch.id,
+            sequence_number=2,
+            session_date=first_day,
+            module="Module two",
+            duration_hours=Decimal("8.0"),
+            status="Scheduled",
+        ),
+    ])
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"training_days": 1},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 422
+    assert "2 scheduled sessions already in the timetable" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +575,7 @@ def test_enum_values_enforced_at_db_level(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Batch Re-Approval on Schedule Change Tests
+# Batch Re-Approval on Governed Edit Tests
 # ---------------------------------------------------------------------------
 
 
@@ -538,7 +586,9 @@ def _create_schema_locked_batch(db_session, role_ids, status="Upcoming"):
 
     batch = Batch(
         batch_id=f"SCHED_LOCKED_BATCH_{status.upper().replace(' ', '_')}_2026",
+        approval_id="OLD-APPROVAL-REF",
         program_name="Schedule Locked Test Program",
+        client_name="Test Client",
         delivery_mode="Online",
         total_enrollments=20,
         training_days=5,
@@ -551,6 +601,8 @@ def _create_schema_locked_batch(db_session, role_ids, status="Upcoming"):
         approver_2_id=UUID(role_ids["sales_spoc_id"]),
         approver_1_status="Approved",
         approver_2_status="Approved",
+        approver_1_approved_at=datetime.now(timezone.utc),
+        approver_2_approved_at=datetime.now(timezone.utc),
         primary_manager_id=UUID(role_ids["primary_manager_id"]),
         coordinator_id=UUID(role_ids["coordinator_id"]),
         sales_spoc_id=UUID(role_ids["sales_spoc_id"]),
@@ -579,6 +631,9 @@ def test_update_triggers_reapproval_when_training_days_changed(client, coord_tok
     assert data["is_schema_locked"] is False
     assert data["approver_1_status"] == "Pending"
     assert data["approver_2_status"] == "Pending"
+    assert data["approver_1_approved_at"] is None
+    assert data["approver_2_approved_at"] is None
+    assert data["approval_id"] is None
     assert data["training_days"] == 10
     assert "training_days" in data["remarks"]
 
@@ -628,13 +683,15 @@ def test_update_triggers_reapproval_when_start_date_changed(client, coord_token_
 
 
 def test_update_triggers_reapproval_when_total_hours_changed(client, coord_token_headers, db_session, role_ids):
-    """Coordinator updates total_hours on Upcoming batch -> Batch goes to Approval 1 Pending."""
+    """Coordinator updates total_hours on Upcoming batch -> Batch goes to Approval 1 Pending, schema unlocked."""
     batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
     batch_id = batch.id
 
+    # training_days moves with total_hours so the pair stays within the
+    # training_days × max_hours_per_day ceiling enforced by update().
     response = client.patch(
         f"/api/v1/batches/{batch_id}",
-        json={"total_hours": "60.00"},
+        json={"training_days": 10, "total_hours": "60.00"},
         headers=coord_token_headers,
     )
     assert response.status_code == 200, response.text
@@ -647,8 +704,8 @@ def test_update_triggers_reapproval_when_total_hours_changed(client, coord_token
     assert "total_hours" in data["remarks"]
 
 
-def test_update_no_reapproval_for_non_schedule_fields(client, coord_token_headers, db_session, role_ids):
-    """Coordinator updates client_name on schema-locked batch -> No re-approval (non-schedule field)."""
+def test_update_triggers_reapproval_for_business_fields(client, coord_token_headers, db_session, role_ids):
+    """A client-name edit is a business change and restarts both approval levels."""
     batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
     batch_id = batch.id
 
@@ -660,16 +717,71 @@ def test_update_no_reapproval_for_non_schedule_fields(client, coord_token_header
     assert response.status_code == 200, response.text
     data = response.json()
 
-    # Should remain in Upcoming with schema locked
-    assert data["status"] == "Upcoming"
-    assert data["is_schema_locked"] is True
-    assert data["approver_1_status"] == "Approved"
-    assert data["approver_2_status"] == "Approved"
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
     assert data["client_name"] == "New Client Name"
+    history_response = client.get(
+        f"/api/v1/batches/{batch_id}/edit-history",
+        headers=coord_token_headers,
+    )
+    assert history_response.status_code == 200, history_response.text
+    assert history_response.json()[0]["changed_fields"]["client_name"] == {
+        "before": "Test Client",
+        "after": "New Client Name",
+    }
 
 
-def test_update_no_reapproval_for_completed_batch(client, coord_token_headers, db_session, role_ids):
-    """Batch in Completed status updated -> No re-approval (not in active statuses)."""
+def test_schedule_capacity_edit_records_all_reapproval_fields(
+    client, coord_token_headers, db_session, role_ids
+):
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={
+            "end_date": (datetime.now(timezone.utc) + timedelta(days=50)).isoformat(),
+            "training_days": 10,
+            "total_hours": "80.00",
+        },
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "Approval 1 Pending"
+
+    history_response = client.get(
+        f"/api/v1/batches/{batch.id}/edit-history",
+        headers=coord_token_headers,
+    )
+    assert history_response.status_code == 200, history_response.text
+    changed_fields = history_response.json()[0]["changed_fields"]
+    assert set(changed_fields) == {"end_date", "training_days", "total_hours"}
+    assert changed_fields["training_days"]["before"] == 5
+    assert changed_fields["training_days"]["after"] == 10
+    assert changed_fields["total_hours"]["before"] == "40.00"
+    assert changed_fields["total_hours"]["after"] == "80.00"
+
+
+def test_business_edit_during_level_two_restarts_at_level_one(
+    client, coord_token_headers, db_session, role_ids
+):
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Approval 2 Pending")
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"location_city": "Pune"},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "Approval 1 Pending"
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    assert data["is_schema_locked"] is False
+
+
+def test_update_rejects_business_change_to_completed_batch(client, coord_token_headers, db_session, role_ids):
+    """A completed batch cannot be changed through the edit endpoint."""
     batch = _create_schema_locked_batch(db_session, role_ids, status="Completed")
     batch_id = batch.id
 
@@ -678,19 +790,11 @@ def test_update_no_reapproval_for_completed_batch(client, coord_token_headers, d
         json={"training_days": 10},
         headers=coord_token_headers,
     )
-    assert response.status_code == 200, response.text
-    data = response.json()
-
-    # Should remain in Completed with schema locked
-    assert data["status"] == "Completed"
-    assert data["is_schema_locked"] is True
-    assert data["approver_1_status"] == "Approved"
-    assert data["approver_2_status"] == "Approved"
-    assert data["training_days"] == 10
+    assert response.status_code == 409, response.text
 
 
-def test_update_no_reapproval_for_admin(client, admin_token_headers, db_session, role_ids):
-    """Admin updates schedule fields -> No re-approval (admins can edit locked schema)."""
+def test_update_reapproval_for_admin_business_edit(client, admin_token_headers, db_session, role_ids):
+    """Admin edits to governed fields also require both approvals."""
     batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
     batch_id = batch.id
 
@@ -702,16 +806,15 @@ def test_update_no_reapproval_for_admin(client, admin_token_headers, db_session,
     assert response.status_code == 200, response.text
     data = response.json()
 
-    # Should remain in Upcoming with schema locked (admin can edit without re-approval)
-    assert data["status"] == "Upcoming"
-    assert data["is_schema_locked"] is True
-    assert data["approver_1_status"] == "Approved"
-    assert data["approver_2_status"] == "Approved"
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
     assert data["training_days"] == 10
 
 
-def test_update_no_reapproval_for_manager(client, manager_token_headers, db_session, role_ids):
-    """Manager updates schedule fields -> No re-approval (managers can edit locked schema)."""
+def test_update_reapproval_for_manager_business_edit(client, manager_token_headers, db_session, role_ids):
+    """Manager edits to governed fields also require both approvals."""
     batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
     batch_id = batch.id
 
@@ -723,11 +826,10 @@ def test_update_no_reapproval_for_manager(client, manager_token_headers, db_sess
     assert response.status_code == 200, response.text
     data = response.json()
 
-    # Should remain in Upcoming with schema locked (manager can edit without re-approval)
-    assert data["status"] == "Upcoming"
-    assert data["is_schema_locked"] is True
-    assert data["approver_1_status"] == "Approved"
-    assert data["approver_2_status"] == "Approved"
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
     assert data["training_days"] == 10
 
 
@@ -748,5 +850,262 @@ def test_update_reapproval_preserves_approval_history_in_remarks(client, coord_t
 
     assert data["status"] == "Approval 1 Pending"
     assert "Previous approval history" in data["remarks"]
-    assert "Schedule changed" in data["remarks"]
+    assert "Batch changed" in data["remarks"]
     assert "training_days" in data["remarks"]
+
+
+def test_update_notes_only_does_not_create_history_or_reset_approvals(
+    client, coord_token_headers, db_session, role_ids
+):
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"remarks": "Updated notes"},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "Upcoming"
+    assert data["is_schema_locked"] is True
+    assert data["remarks"] == "Updated notes"
+    assert db_session.query(BatchEditHistory).filter_by(batch_id=batch.id).count() == 0
+
+
+def test_finance_only_update_does_not_create_edit_history(
+    client, admin_token_headers, db_session, role_ids
+):
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"finance_status": "Cleared"},
+        headers=admin_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "Upcoming"
+    assert data["is_schema_locked"] is True
+    assert data["finance_status"] == "Cleared"
+    assert db_session.query(BatchEditHistory).filter_by(batch_id=batch.id).count() == 0
+
+
+def test_update_same_business_value_is_a_noop(client, coord_token_headers, db_session, role_ids):
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    previous_updated_at = batch.updated_at
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"client_name": batch.client_name},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "Upcoming"
+    assert db_session.query(BatchEditHistory).filter_by(batch_id=batch.id).count() == 0
+    db_session.refresh(batch)
+    assert batch.updated_at == previous_updated_at
+
+
+# ---------------------------------------------------------------------------
+# End-date reduction workflow: out-of-window timetable rows must go first
+# ---------------------------------------------------------------------------
+
+
+WINDOW_START = datetime.now(timezone.utc) + timedelta(days=30)
+WINDOW_END = WINDOW_START + timedelta(days=14)
+
+
+def _create_window_batch(db_session, role_ids):
+    """A schema-locked Upcoming batch with a two-week window and 6 training days."""
+    batch = Batch(
+        batch_id="END_DATE_WINDOW_BATCH_2026",
+        approval_id="OLD-APPROVAL-REF",
+        program_name="End Date Reduction Program",
+        client_name="Test Client",
+        delivery_mode="Online",
+        total_enrollments=20,
+        training_days=6,
+        total_hours=Decimal("48.00"),
+        start_date=WINDOW_START,
+        end_date=WINDOW_END,
+        category="Bootcamp",
+        status="Upcoming",
+        approver_1_id=UUID(role_ids["primary_manager_id"]),
+        approver_2_id=UUID(role_ids["sales_spoc_id"]),
+        approver_1_status="Approved",
+        approver_2_status="Approved",
+        approver_1_approved_at=datetime.now(timezone.utc),
+        approver_2_approved_at=datetime.now(timezone.utc),
+        primary_manager_id=UUID(role_ids["primary_manager_id"]),
+        coordinator_id=UUID(role_ids["coordinator_id"]),
+        sales_spoc_id=UUID(role_ids["sales_spoc_id"]),
+        is_schema_locked=True,
+    )
+    db_session.add(batch)
+    db_session.commit()
+    db_session.refresh(batch)
+    return batch
+
+
+def _add_session(db_session, batch, day_offset, module, status="Scheduled"):
+    session = TrainingSession(
+        batch_id=batch.id,
+        sequence_number=1,
+        session_date=WINDOW_START + timedelta(days=day_offset),
+        module=module,
+        duration_hours=Decimal("8.0"),
+        status=status,
+    )
+    db_session.add(session)
+    db_session.commit()
+    db_session.refresh(session)
+    return session
+
+
+def test_cannot_reduce_end_date_past_scheduled_sessions(client, db_session, coord_token_headers, role_ids):
+    """Reducing end_date while timetable rows sit after it is a hard 422."""
+    batch = _create_window_batch(db_session, role_ids)
+    _add_session(db_session, batch, 10, "Module ten")
+    _add_session(db_session, batch, 12, "Module twelve")
+    _add_session(db_session, batch, 13, "Module thirteen")
+
+    new_end = WINDOW_START + timedelta(days=11)
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"end_date": new_end.isoformat()},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "2 scheduled session(s)" in detail
+    assert "Module ten" not in detail
+    assert "Module twelve" in detail and "Module thirteen" in detail
+    assert (WINDOW_START + timedelta(days=12)).date().isoformat() in detail
+    assert (WINDOW_START + timedelta(days=13)).date().isoformat() in detail
+
+    db_session.refresh(batch)
+    assert db_session.query(TrainingSession).filter_by(batch_id=batch.id).count() == 3
+    assert batch.end_date.date() == WINDOW_END.date()
+
+
+def test_session_on_new_end_date_does_not_block(client, db_session, coord_token_headers, role_ids):
+    """A session dated exactly on the new end date is inside the window."""
+    batch = _create_window_batch(db_session, role_ids)
+    _add_session(db_session, batch, 10, "Module ten")
+    _add_session(db_session, batch, 12, "Module twelve")
+
+    new_end = WINDOW_START + timedelta(days=12)
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"end_date": new_end.isoformat()},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["calendar_days"] == 12
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+
+
+def test_reduce_end_date_after_deleting_out_of_window_sessions(client, db_session, coord_token_headers, role_ids):
+    """Delete-first-then-save is the supported workflow and succeeds end to end."""
+    batch = _create_window_batch(db_session, role_ids)
+    inside = _add_session(db_session, batch, 10, "Module ten")
+    first_offender = _add_session(db_session, batch, 12, "Module twelve")
+    second_offender = _add_session(db_session, batch, 13, "Module thirteen")
+
+    for session in (first_offender, second_offender):
+        deleted = client.delete(
+            f"/api/v1/sessions/scheduled/{session.id}",
+            headers=coord_token_headers,
+        )
+        assert deleted.status_code == 204, deleted.text
+
+    new_end = WINDOW_START + timedelta(days=11)
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"end_date": new_end.isoformat()},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["end_date"].startswith(new_end.date().isoformat())
+    assert data["calendar_days"] == 11
+    assert data["status"] == "Approval 1 Pending"
+
+    remaining = client.get(
+        "/api/v1/sessions/scheduled", params={"batch_id": str(batch.id)},
+        headers=coord_token_headers,
+    )
+    assert remaining.status_code == 200, remaining.text
+    assert [row["id"] for row in remaining.json()] == [str(inside.id)]
+
+
+def test_cannot_reduce_end_date_past_completed_session(client, db_session, coord_token_headers, role_ids):
+    """A delivered session past the target date makes the reduction impossible."""
+    batch = _create_window_batch(db_session, role_ids)
+    _add_session(db_session, batch, 10, "Module ten")
+    delivered = _add_session(db_session, batch, 12, "Delivered module", status="Completed")
+
+    new_end = WINDOW_START + timedelta(days=11)
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"end_date": new_end.isoformat()},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "completed or have a logged delivery and cannot be deleted" in response.json()["detail"]
+
+    refused = client.delete(
+        f"/api/v1/sessions/scheduled/{delivered.id}",
+        headers=coord_token_headers,
+    )
+    assert refused.status_code == 409, refused.text
+
+
+def test_update_rejects_total_hours_above_ceiling(client, db_session, coord_token_headers, role_ids):
+    """total_hours above training_days × max_hours_per_day (default 8) is rejected."""
+    batch = _create_window_batch(db_session, role_ids)
+
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"training_days": 6, "total_hours": "60.00"},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "Total hours cannot exceed training_days × max_hours_per_day (6 × 8 = 48)" in response.json()["detail"]
+
+
+def test_update_allows_total_hours_exactly_at_ceiling(client, db_session, coord_token_headers, role_ids):
+    """A pair that lands exactly on the ceiling is valid and still re-approves."""
+    batch = _create_window_batch(db_session, role_ids)
+
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"training_days": 4, "total_hours": "32.00"},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["training_days"] == 4
+    assert Decimal(data["total_hours"]) == Decimal("32.00")
+    assert data["status"] == "Approval 1 Pending"
+
+
+def test_increasing_end_date_is_not_blocked(client, db_session, coord_token_headers, role_ids):
+    """The guard only fires when the end date is reduced."""
+    batch = _create_window_batch(db_session, role_ids)
+    _add_session(db_session, batch, 12, "Module twelve")
+
+    new_end = WINDOW_END + timedelta(days=10)
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"end_date": new_end.isoformat()},
+        headers=coord_token_headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["calendar_days"] == 24

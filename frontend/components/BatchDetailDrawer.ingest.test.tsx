@@ -127,6 +127,18 @@ describe("Timetable ingestion preview", () => {
     );
   });
 
+  it("removes an extracted timetable row from the preview", async () => {
+    renderDrawer();
+    await openParsedPreview();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete timetable row 1" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Module 1: Foundations")).toBeNull();
+      expect(screen.getByText("No schedule rows were extracted")).toBeTruthy();
+    });
+  });
+
   it("keeps no search, filter, sort, column, export or conflict control", async () => {
     renderDrawer();
     await openParsedPreview();

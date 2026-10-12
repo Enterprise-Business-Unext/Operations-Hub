@@ -182,6 +182,11 @@ export interface Batch {
   approver_2_status?: "Pending" | "Approved" | "Rejected";
   approver_1_approved_at?: string | null;
   approver_2_approved_at?: string | null;
+  is_reapproval?: boolean;
+  reapproval_count?: number;
+  last_reapproval_at?: string | null;
+  last_reapproval_by?: string | null;
+  reapproval_changes?: Record<string, { before: unknown; after: unknown }> | null;
   primary_manager_id?: string | null;
   coordinator_id?: string | null;
   sales_spoc_id?: string | null;
@@ -207,6 +212,15 @@ export interface Batch {
   scheduled_session_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface BatchEditHistoryEntry {
+  id: string;
+  batch_id: string;
+  edited_by?: string | null;
+  editor_name?: string | null;
+  changed_fields: Record<string, { before: unknown; after: unknown }>;
+  created_at: string;
 }
 
 export interface ActiveBatchItem {
@@ -309,7 +323,6 @@ export interface TrainingSession {
   id: string;
   batch_id: string;
   training_session_id?: string | null;
-  faculty_id?: string | null;
   faculty_name: string;
   date_of_training: string;
   start_time?: string | null;
@@ -319,7 +332,7 @@ export interface TrainingSession {
   venue?: string | null;
   location_city?: string | null;
   mode_of_delivery: string;
-  status: "Scheduled" | "Completed";
+  status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Not Conducted" | "Rescheduled";
   feedback_submitted: boolean;
   feedback_rating?: number | null;
   feedback_notes?: string | null;
@@ -330,8 +343,6 @@ export interface TrainingSession {
   program_type_id?: string | null;
   faculty_type_id?: string | null;
   faculty_type_name?: string | null;
-  rating?: number | null;
-  topic_feedback?: string | null;
   created_at: string;
   updated_at?: string | null;
   // Batch-related fields for display
@@ -341,6 +352,8 @@ export interface TrainingSession {
   program?: string | null;
   batch_code?: string | null;
   coordinator?: string | null;
+  // Serialized read-only alias of `feedback_notes` (backend models/session.py),
+  // which Gate 1 also writes; the ledger's feedback text lives in one column.
   module_feedback?: string | null;
 }
 
@@ -372,7 +385,6 @@ export interface CreateSessionPayload {
   start_time?: string;
   end_time?: string;
   topic: string;
-  faculty_id?: string;
   faculty_name?: string;
   no_of_hours?: number;
   venue?: string;
@@ -383,10 +395,9 @@ export interface CreateSessionPayload {
   feedback_rating?: number;
   feedback_notes?: string;
   outcome_reason?: string;
-  outcome_at?: string;
-  outcome_by?: string;
   vertical?: string;
   program_type_id?: string;
+  faculty_type_id: string;
 }
 
 export interface SessionFeedbackPayload {
@@ -404,13 +415,16 @@ export interface BatchNpsClosurePayload {
   detractors_count: number;
 }
 
+// Keys actually returned by PATCH /sessions/{id}/complete (gates/service.py).
 export interface Gate1CompleteResponse {
-  id: string;
+  session_id: string;
+  batch_id: string;
   status: string;
-  feedback_rating: number;
-  feedback_notes: string;
+  feedback_submitted: boolean;
+  rating: number;
+  topic_feedback: string;
   total_students_present: number;
-  completed_at: string;
+  submitted_by?: string;
 }
 
 export interface FmsSyncResponse {
@@ -963,6 +977,10 @@ class ApiService {
     return this.request<Batch>(`/batches/${id}`);
   }
 
+  async getBatchEditHistory(id: string): Promise<BatchEditHistoryEntry[]> {
+    return this.request<BatchEditHistoryEntry[]>(`/batches/${id}/edit-history`);
+  }
+
   async getActiveBatches(params?: { 
     filterDate?: string; 
     skip?: number; 
@@ -1160,6 +1178,12 @@ class ApiService {
     });
   }
 
+  async deleteScheduledSession(id: string): Promise<void> {
+    return this.request<void>(`/sessions/scheduled/${id}`, {
+      method: "DELETE",
+    });
+  }
+
   async createScheduledSession(payload: {
     batch_id: string;
     session_date: string;
@@ -1186,6 +1210,30 @@ class ApiService {
   async updateSession(id: string, payload: Partial<CreateSessionPayload>): Promise<TrainingSession> {
     return this.request<TrainingSession>(`/sessions/${id}`, {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async cancelSession(id: string, reason: string): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async markSessionNotConducted(id: string, reason: string): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}/not-conducted`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async rescheduleSession(
+    id: string,
+    payload: { date_of_training: string; start_time?: string; end_time?: string; reason: string },
+  ): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}/reschedule`, {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   }

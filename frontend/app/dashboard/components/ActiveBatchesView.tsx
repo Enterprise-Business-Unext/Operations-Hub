@@ -55,10 +55,10 @@ interface ActiveBatchesViewProps {
   onSessionPageChange: (page: number) => void;
   onSessionPageSizeChange: (pageSize: number) => void;
   onRefresh?: () => void;
-  // Rows here are the active-list projection, not a full `Batch`, so the
+  // Rows here only carry the immutable batch code, not a full `Batch`, so the
   // callback is typed against what the table actually holds. The host has to
-  // resolve the full record before opening the drawer.
-  onOpenBatchDetail?: (batch: ActiveBatchItem) => void;
+  // resolve the full record from that code before opening the drawer.
+  onOpenBatchDetail?: (batchId: string) => void;
 }
 
 function formatTime(value?: string | null, fallback: string = "—"): string {
@@ -292,12 +292,12 @@ function BatchRow({
 }: {
   batch: ActiveBatchItem;
   columns: UseColumnVisibilityResult<BatchColumnKey>;
-  onOpenBatchDetail?: (batch: ActiveBatchItem) => void;
+  onOpenBatchDetail?: (batchId: string) => void;
 }) {
   const rate = Math.min(100, Math.max(0, Math.round(batch.progress ?? 0)));
   const tone = progressTone(rate);
   const totalDays = batch.training_days || 0;
-  const open = () => onOpenBatchDetail?.(batch);
+  const open = () => onOpenBatchDetail?.(batch.batch_id);
 
   return (
     <tr
@@ -443,16 +443,43 @@ function BatchRow({
 function SessionRow({
   session,
   columns,
+  onOpenBatchDetail,
 }: {
   session: ActiveSessionItem;
   columns: UseColumnVisibilityResult<SessionColumnKey>;
+  onOpenBatchDetail?: (batchId: string) => void;
 }) {
   const isActual = session.session_type === "actual";
   const person = isActual ? session.faculty_name : session.trainer_name;
   const location = session.location_city || session.venue;
+  // The API contract allows an empty code, and a row without one has nothing to
+  // open, so the handler stays undefined instead of becoming a no-op click.
+  const batchCode = session.batch_id?.trim();
+  const openBatch = onOpenBatchDetail && batchCode ? () => onOpenBatchDetail(batchCode) : undefined;
 
   return (
-    <tr style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+    <tr
+      onClick={openBatch}
+      onKeyDown={
+        openBatch
+          ? (event) => {
+              // The whole row is the hit target for the detail drawer, so it has
+              // to answer the keyboard as well as the mouse.
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openBatch();
+              }
+            }
+          : undefined
+      }
+      tabIndex={openBatch ? 0 : undefined}
+      aria-label={openBatch ? `Open details for batch ${batchCode}` : undefined}
+      style={{
+        borderBottom: "1px solid var(--border-subtle)",
+        fontSize: "0.875rem",
+        ...(openBatch ? { cursor: "pointer" } : null),
+      }}
+    >
       {columns.isVisible("batch") && (
         <td style={CELL_STYLE}>
           <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{session.batch_id || "—"}</div>
@@ -591,8 +618,9 @@ export function ActiveBatchesView({
   const totalBatches = data?.total_batches ?? 0;
   const totalSessions = data?.total_sessions ?? sessions.length;
 
-  // Only planned sessions contribute: the API already drops cancelled,
-  // not-conducted and completed rows from this list.
+  // Every scheduled row contributes: `/batches/active` returns all statuses on
+  // the date (the repository applies no status filter), so cancelled and
+  // completed sessions also count here.
   const hoursScheduled = useMemo(
     () =>
       sessions.reduce(
@@ -666,16 +694,16 @@ export function ActiveBatchesView({
         />
         <StatCard
           icon={<Clock className="h-5 w-5" aria-hidden="true" />}
-          label="Sessions Today"
+          label="Sessions"
           value={totalSessions}
-          hint="Planned and delivered combined"
+          hint="Planned and delivered for the date"
           tone="info"
         />
         <StatCard
           icon={<Timer className="h-5 w-5" aria-hidden="true" />}
-          label="Hours Scheduled"
+          label="Scheduled Hours"
           value={`${hoursScheduled.toFixed(1)} hrs`}
-          hint="Planned delivery hours for the date"
+          hint="Curriculum hours scheduled for the date"
           tone="warning"
         />
         <StatCard
@@ -848,7 +876,6 @@ export function ActiveBatchesView({
       </FullscreenTable>
 
       <FullscreenTable
-        nativeFullscreen
         title={
           <PanelTitle
             title="Ongoing Sessions"
@@ -980,7 +1007,7 @@ export function ActiveBatchesView({
                   <EmptyState
                     icon={<Calendar className="h-5 w-5" aria-hidden="true" />}
                     title="No sessions scheduled for this date"
-                    description="Sessions marked cancelled, not conducted, or completed are excluded."
+                    description="All statuses for this date are shown, including cancelled, not conducted, and completed."
                   />
                 ) : (
                   <EmptyState
@@ -997,7 +1024,12 @@ export function ActiveBatchesView({
               </TableStateRow>
             ) : (
               pagedSessions.map((session) => (
-                <SessionRow key={`${session.session_type}-${session.id}`} session={session} columns={sessionColumns} />
+                <SessionRow
+                  key={`${session.session_type}-${session.id}`}
+                  session={session}
+                  columns={sessionColumns}
+                  onOpenBatchDetail={onOpenBatchDetail}
+                />
               ))
             )}
           </tbody>

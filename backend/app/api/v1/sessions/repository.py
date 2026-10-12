@@ -51,6 +51,15 @@ class SessionRepository(ISessionRepository):
         self.db.refresh(session)
         return session
 
+    def has_utilization_for_training_session(self, session_id: UUID) -> bool:
+        return self.db.query(FacultyUtilization.id).filter(
+            FacultyUtilization.training_session_id == session_id
+        ).first() is not None
+
+    def delete_scheduled(self, session: TrainingSession) -> None:
+        self.db.delete(session)
+        self.db.commit()
+
     # --- Delivery ledger ---
     def list_utilizations(
         self,

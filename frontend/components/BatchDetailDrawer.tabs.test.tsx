@@ -9,6 +9,8 @@ const getVerticals = vi.fn();
 const getProgramTypes = vi.fn();
 const getSessions = vi.fn();
 const getScheduledSessions = vi.fn();
+const deleteScheduledSession = vi.fn();
+const updateBatch = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -22,6 +24,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getProgramTypes: (...a: unknown[]) => getProgramTypes(...a),
       getSessions: (...a: unknown[]) => getSessions(...a),
       getScheduledSessions: (...a: unknown[]) => getScheduledSessions(...a),
+      deleteScheduledSession: (...a: unknown[]) => deleteScheduledSession(...a),
+      updateBatch: (...a: unknown[]) => updateBatch(...a),
     },
   };
 });
@@ -36,6 +40,8 @@ const batch = {
   category: "Bootcamp",
   residential_type: "Residential",
   program_name: "Full Stack Python",
+  client_name: "Example Client",
+  sow_number: "SOW-001",
   delivery_mode: "Online",
   training_days: 5,
   total_hours: 40,
@@ -66,6 +72,8 @@ describe("BatchDetailDrawer initialTab", () => {
     getProgramTypes.mockResolvedValue([]);
     getSessions.mockResolvedValue([]);
     getScheduledSessions.mockResolvedValue([]);
+    deleteScheduledSession.mockResolvedValue(undefined);
+    updateBatch.mockResolvedValue(batch);
   });
 
   it("lands on the timetable when initialTab is sessions", async () => {
@@ -119,6 +127,83 @@ describe("BatchDetailDrawer shell", () => {
     getProgramTypes.mockResolvedValue([]);
     getSessions.mockResolvedValue([]);
     getScheduledSessions.mockResolvedValue([]);
+    deleteScheduledSession.mockResolvedValue(undefined);
+    updateBatch.mockResolvedValue(batch);
+  });
+
+  it("submits only fields supported by the batch update API", async () => {
+    renderDrawer();
+
+    await waitFor(() => {
+      expect(screen.getByText("Curriculum / Program Title")).toBeTruthy();
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: /Edit Batch/i })[1]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Save Changes/i })).toBeTruthy();
+    });
+    expect(screen.queryByText("Non-Residential Enrollments")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => {
+      expect(updateBatch).toHaveBeenCalledTimes(1);
+    });
+    expect(updateBatch.mock.calls[0][1]).not.toHaveProperty("non_residential_enrollments");
+    expect(updateBatch.mock.calls[0][1]).toHaveProperty("total_enrollments", 30);
+  });
+
+  it("counts each scheduled session when multiple modules share a date", async () => {
+    const sharedDate = "2027-01-04";
+    const common = {
+      batch_id: batch.id,
+      session_date: sharedDate,
+      day_name: "Monday",
+      duration_hours: 4,
+      status: "Scheduled",
+      created_at: "2027-01-01T00:00:00Z",
+      updated_at: "2027-01-01T00:00:00Z",
+      utilization_logged: false,
+    };
+    getScheduledSessions.mockResolvedValue([
+      { ...common, id: "schedule-1", sequence_number: 1, module: "Morning module" },
+      { ...common, id: "schedule-2", sequence_number: 2, module: "Afternoon module" },
+    ]);
+    renderDrawer("sessions");
+
+    await waitFor(() => {
+      expect(screen.getByText("Curriculum Schedule (2 Sessions)")).toBeTruthy();
+    });
+    expect(screen.getByText("2 sessions / 0 logged")).toBeTruthy();
+    expect(screen.getAllByText("Session")).toHaveLength(2);
+    expect(screen.getByText("1")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
+  });
+
+  it("deletes a pending scheduled session after confirmation", async () => {
+    getScheduledSessions.mockResolvedValue([
+      {
+        id: "schedule-delete",
+        batch_id: batch.id,
+        sequence_number: 1,
+        session_date: "2027-01-04",
+        day_name: "Monday",
+        duration_hours: 4,
+        status: "Scheduled",
+        created_at: "2027-01-01T00:00:00Z",
+        updated_at: "2027-01-01T00:00:00Z",
+        utilization_logged: false,
+        module: "Removable module",
+      },
+    ]);
+    renderDrawer("sessions");
+
+    fireEvent.click(await screen.findByRole("button", { name: /Delete scheduled session 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete session" }));
+
+    await waitFor(() => {
+      expect(deleteScheduledSession).toHaveBeenCalledWith("schedule-delete");
+    });
+    expect(getScheduledSessions).toHaveBeenCalledTimes(2);
   });
 
   it("is a labelled modal dialog", async () => {

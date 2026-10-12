@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Controller, useFormContext } from "react-hook-form";
-import { api, Batch } from "@/lib/api";
+import { api, Batch, BatchEditHistoryEntry, ScheduledSession } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { Lock, CheckCircle2, AlertCircle, XCircle, type LucideIcon } from "lucide-react";
 import { FormModal } from "@/components/forms/modal/FormModal";
@@ -206,6 +206,61 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
   canApprove,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [editHistory, setEditHistory] = useState<BatchEditHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !batch || !canApprove) {
+      return;
+    }
+
+    let isCurrent = true;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    api.getBatchEditHistory(batch.id)
+      .then((history) => {
+        if (isCurrent) setEditHistory(history);
+      })
+      .catch((error) => {
+        if (isCurrent) setHistoryError(errorMessage(error, "Unable to load batch change history"));
+      })
+      .finally(() => {
+        if (isCurrent) setHistoryLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [isOpen, batch?.id, canApprove]);
+
+  useEffect(() => {
+    if (!isOpen || !batch || !canApprove) {
+      return;
+    }
+
+    let isCurrent = true;
+    setScheduledSessions([]);
+    setScheduleLoading(true);
+    setScheduleError(null);
+    api.getScheduledSessions(batch.id)
+      .then((sessions) => {
+        if (isCurrent) setScheduledSessions(sessions);
+      })
+      .catch((error) => {
+        if (isCurrent) setScheduleError(errorMessage(error, "Unable to load scheduled sessions"));
+      })
+      .finally(() => {
+        if (isCurrent) setScheduleLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [isOpen, batch?.id, canApprove]);
 
   // `FormModal` returns `null` when closed, which discards its `useForm` state
   // anyway; keeping this subtree mounted across opens would retain the previous
@@ -245,6 +300,7 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
       submitLabel={`Authorize Level ${currentLevel}`}
       loading={isLoading}
       initialData={{ decision: "approve" }}
+      size="xl"
       render={(form) => {
         const decision = form.watch("decision");
 
@@ -289,6 +345,49 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
               ]}
             />
 
+            <section className="mb-4 space-y-3 rounded-lg border p-4" aria-label="Scheduled sessions">
+              <h3 className="text-sm font-semibold">Uploaded Schedule</h3>
+              {scheduleLoading && (
+                <p className="text-sm text-muted-foreground" role="status">
+                  Loading scheduled sessions…
+                </p>
+              )}
+              {scheduleError && (
+                <p className="text-sm text-destructive" role="alert">{scheduleError}</p>
+              )}
+              {!scheduleLoading && !scheduleError && scheduledSessions.length === 0 && (
+                <p className="text-sm text-muted-foreground">No scheduled sessions have been uploaded for this batch.</p>
+              )}
+              {!scheduleLoading && !scheduleError && scheduledSessions.length > 0 && (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {scheduledSessions.length} {scheduledSessions.length === 1 ? "session" : "sessions"}
+                  </p>
+                  <ol className="max-h-64 space-y-2 overflow-y-auto">
+                    {scheduledSessions.map((session, index) => (
+                      <li key={session.id} className="rounded-md bg-muted/50 p-3 text-sm">
+                        <p className="font-medium">
+                          Session {session.sequence_number || index + 1}: {session.module || "Module not specified"}
+                        </p>
+                        <p className="text-muted-foreground">
+                          {formatDate(session.session_date)}
+                          {session.day_name ? ` (${session.day_name})` : ""}
+                          {" · "}
+                          {session.start_time ? String(session.start_time).slice(0, 5) : "Time not set"}
+                          {session.end_time ? `–${String(session.end_time).slice(0, 5)}` : ""}
+                          {" · "}
+                          {session.duration_hours} hours
+                        </p>
+                        <p className="text-muted-foreground">
+                          Faculty: {session.trainer_name || batch.faculty_assigned_text || "Not assigned"}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                </>
+              )}
+            </section>
+
             {/* Approver Status */}
             <DetailGrid
               className="mb-4"
@@ -301,8 +400,54 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
                   "Approver 2 Status",
                   <StatusBadge key="approver-2" status={batch.approver_2_status} emptyLabel="Pending" />,
                 ],
+                ...(batch.is_reapproval
+                  ? ([["Reapproval", `#${batch.reapproval_count ?? 1}`]] as Array<[string, React.ReactNode]>)
+                  : []),
               ]}
             />
+
+            {historyLoading && (
+              <p className="mb-4 text-sm text-muted-foreground" role="status">
+                Loading change history…
+              </p>
+            )}
+            {historyError && (
+              <p className="mb-4 text-sm text-destructive" role="alert">{historyError}</p>
+            )}
+            {!historyLoading && !historyError && editHistory.length > 0 && (
+              <section className="mb-4 space-y-3 rounded-lg border p-4" aria-label="Batch change history">
+                <h3 className="text-sm font-semibold">Changes requiring reapproval</h3>
+                {editHistory.map((entry) => (
+                  <div key={entry.id} className="space-y-2 border-t pt-3 first:border-t-0 first:pt-0">
+                    <p className="text-xs text-muted-foreground">
+                      {entry.editor_name || "User"} · {new Date(entry.created_at).toLocaleString()}
+                    </p>
+                    <ul className="space-y-1.5">
+                      {Object.entries(entry.changed_fields).map(([field, change]) => (
+                        <li key={field} className="text-sm">
+                          <span className="font-medium">{field.replaceAll("_", " ")}:</span>{" "}
+                          <span className="text-muted-foreground">
+                            {change.before == null
+                              ? "Not set"
+                              : typeof change.before === "object"
+                                ? JSON.stringify(change.before)
+                                : String(change.before)}
+                          </span>
+                          {" → "}
+                          <span>
+                            {change.after == null
+                              ? "Not set"
+                              : typeof change.after === "object"
+                                ? JSON.stringify(change.after)
+                                : String(change.after)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </section>
+            )}
 
             {/* Decision Selection */}
             <DecisionRadioGroup level={currentLevel} />

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, SessionStatus
+from app.models.session import SessionStatus, TERMINAL_UTILIZATION_STATUSES
 from app.schemas.feedback import SessionFeedbackCreate, BatchNpsClosureCreate
 from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.gates.repository_interfaces import IGateRepository
@@ -36,7 +36,7 @@ class GatekeeperService:
         if feedback_data.rating < Decimal("1.0") or feedback_data.rating > Decimal("5.0"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Quality Gate 1 Rejected: Rating must be strictly between 1.0 and 5.0."
+                detail="Quality Gate 1 Rejected: Rating must be between 1.0 and 5.0."
             )
 
         # Parse or query session
@@ -48,19 +48,14 @@ class GatekeeperService:
             pass
 
         if not session_obj:
-            if str(session_id).startswith("mock-"):
-                return {
-                    "session_id": str(session_id),
-                    "status": "Completed",
-                    "feedback_submitted": True,
-                    "rating": feedback_data.rating,
-                    "topic_feedback": feedback_data.topic_feedback,
-                    "total_students_present": feedback_data.total_students_present,
-                    "submitted_by": str(user_id)
-                }
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        if session_obj.status == SessionStatus.Completed:
+        if session_obj.status in TERMINAL_UTILIZATION_STATUSES:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not available for Gate 1 completion")
+        if not session_obj.training_session_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A linked training_session_id is required to complete a session",
+            )
 
         session_obj.status = SessionStatus.Completed
         session_obj.feedback_submitted = True
@@ -138,8 +133,7 @@ class GatekeeperService:
             for group in self.gate_repo.list_all_sessions_for_batch(batch.id)
             for session in group
         ]
-        TERMINAL_STATUSES = {SessionStatus.Completed}
-        if all_sessions and any(s.status not in TERMINAL_STATUSES for s in all_sessions):
+        if all_sessions and any(s.status not in TERMINAL_UTILIZATION_STATUSES for s in all_sessions):
             raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
 
         promoters = closure_data.promoters_count
@@ -162,6 +156,7 @@ class GatekeeperService:
         batch.is_schema_locked = True
         batch.updated_at = datetime.now(timezone.utc)
 
+        self.gate_repo.delete_batch_edit_history(batch.id)
         self.gate_repo.commit()
         self.gate_repo.refresh(batch)
         return batch

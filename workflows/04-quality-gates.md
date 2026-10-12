@@ -68,6 +68,7 @@ There are two quality checkpoints (Gates) that must be completed before a batch 
 3. Set `status="Completed"`
 4. Set `is_schema_locked=True`
 5. **Does NOT modify `batch_avg_feedback`** (Gate 1 owns that field)
+6. Delete the batch's `batch_edit_history` rows in the same transaction
 
 **Failure Modes:**
 - `batch_avg_feedback is None` → 409 Conflict: "Quality Checkpoint 1 must be completed before batch closure"

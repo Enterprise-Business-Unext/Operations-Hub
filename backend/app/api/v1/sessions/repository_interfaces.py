@@ -42,6 +42,14 @@ class ISessionRepository(ABC):
     def create_scheduled(self, session: TrainingSession) -> TrainingSession:
         pass
 
+    @abstractmethod
+    def has_utilization_for_training_session(self, session_id: UUID) -> bool:
+        pass
+
+    @abstractmethod
+    def delete_scheduled(self, session: TrainingSession) -> None:
+        pass
+
     # --- Delivery ledger ---
     @abstractmethod
     def list_utilizations(

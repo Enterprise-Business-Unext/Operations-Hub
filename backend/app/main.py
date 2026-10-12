@@ -155,14 +155,8 @@ class RedisRateLimitMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Only run auto-migration/seeding in development
-    if settings.ENVIRONMENT != "production":
-        try:
-            init_db()
-        except Exception as e:
-            print(f"Warning: Database startup auto-migration/seeding encountered: {e}")
-    else:
-        print("Production mode: Skipping auto-migration. Run 'alembic upgrade head' manually.")
+    # Keep the schema aligned at startup; production skips optional seed data.
+    init_db(seed_base_data=settings.ENVIRONMENT != "production")
     
     # Start scheduler
     start_scheduler()

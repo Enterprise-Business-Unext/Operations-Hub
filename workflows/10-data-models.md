@@ -108,6 +108,17 @@
 **Approval Status Enum Values:**
 - `Pending`, `Approved`, `Rejected`
 
+### BatchEditHistory
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Primary key |
+| `batch_id` | UUID | FK to `batches.id`, indexed, cascade delete |
+| `edited_by` | UUID | Nullable FK to `users.id` |
+| `changed_fields` | JSON | Changed business/schedule fields with before/after values |
+| `created_at` | TIMESTAMPTZ | Indexed edit timestamp |
+
+The table is created for existing and new databases by `init_db()` (no Alembic migration). Gate 2 completion deletes a batch's history in the same transaction as the completion update.
+
 ### TrainingSession
 | Field | Type | Description |
 |-------|------|-------------|
@@ -154,10 +165,13 @@
 | `venue` | String(255) | Nullable |
 | `location_city` | String(100) | Nullable |
 | `mode_of_delivery` | String(50) | Default "Online" |
-| `status` | String(30) | Default "Completed", indexed |
+| `status` | String(30) | Default "Scheduled", indexed |
 | `feedback_submitted` | Boolean | Default False |
 | `feedback_rating` | Numeric(3,2) | Nullable |
 | `feedback_notes` | Text | Nullable |
+| `outcome_reason` | Text | Nullable, required for Cancelled/Not Conducted |
+| `outcome_at` | TIMESTAMPTZ | Nullable |
+| `outcome_by` | UUID | FK to users.id, nullable |
 | `vertical` | String(50) | Nullable |
 | `program_type_id` | UUID | FK to `program_types.id`, nullable, indexed |
 | `faculty_type_id` | UUID | FK to `faculty_types.id`, nullable, indexed |

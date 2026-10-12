@@ -11,7 +11,23 @@ from app.core.database import Base
 
 class SessionStatus(str, PyEnum):
     Scheduled = "Scheduled"
+    InProgress = "InProgress"
     Completed = "Completed"
+    Cancelled = "Cancelled"
+    NotConducted = "Not Conducted"
+    Rescheduled = "Rescheduled"
+
+
+TERMINAL_UTILIZATION_STATUSES = frozenset({
+    SessionStatus.Completed,
+    SessionStatus.Cancelled,
+    SessionStatus.NotConducted,
+})
+ACTIVE_UTILIZATION_STATUSES = frozenset({
+    SessionStatus.Scheduled,
+    SessionStatus.InProgress,
+    SessionStatus.Completed,
+})
 
 
 class TrainingSession(Base):
@@ -70,10 +86,13 @@ class FacultyUtilization(Base):
     venue = Column(String(255), nullable=True)
     location_city = Column(String(100), nullable=True)
     mode_of_delivery = Column(String(50), nullable=False, default="Online")
-    status = Column(Enum(SessionStatus), default=SessionStatus.Completed, nullable=False, index=True)
+    status = Column(Enum(SessionStatus), default=SessionStatus.Scheduled, nullable=False, index=True)
     feedback_submitted = Column(Boolean, nullable=False, default=False)
     feedback_rating = Column(Numeric(3, 2), nullable=True)
     feedback_notes = Column(Text, nullable=True)
+    outcome_reason = Column(Text, nullable=True)
+    outcome_at = Column(DateTime(timezone=True), nullable=True)
+    outcome_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     vertical = Column(String(50), nullable=True)
     program_type_id = Column(Uuid(as_uuid=True), ForeignKey("program_types.id", ondelete="SET NULL"), nullable=True, index=True)
     faculty_type_id = Column(Uuid(as_uuid=True), ForeignKey("faculty_types.id", ondelete="SET NULL"), nullable=True, index=True)

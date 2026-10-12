@@ -53,7 +53,7 @@ def export_faculty_utilization_csv(
     writer = csv.writer(output)
     writer.writerow([
         "Date", "Faculty Name", "Faculty Type", "Topic", "Hours", "City", "Venue", "Mode",
-        "Status", "Feedback Rating", "Feedback Notes", "Outcome Reason",
+        "Status", "Feedback Rating", "Module Feedback", "Outcome Reason",
         "Outcome At"
     ])
     
@@ -70,6 +70,8 @@ def export_faculty_utilization_csv(
             r.status,
             float(r.feedback_rating) if r.feedback_rating else "",
             r.feedback_notes or "",
+            r.outcome_reason or "",
+            r.outcome_at.isoformat() if r.outcome_at else "",
         ])
     
     output.seek(0)

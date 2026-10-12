@@ -7,12 +7,9 @@ from sqlalchemy import Date, and_, cast, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization
+from app.models.session import ACTIVE_UTILIZATION_STATUSES, FacultyUtilization, SessionStatus
 from app.models.user import User
 from app.api.v1.analytics.repository_interfaces import DomainAggregate, IAnalyticsRepository
-
-
-_DEPLOYED_STATUSES = ["Scheduled", "Completed"]
 
 
 class AnalyticsRepository(IAnalyticsRepository):
@@ -108,7 +105,10 @@ class AnalyticsRepository(IAnalyticsRepository):
     def count_ongoing_sessions(self, batch_ids: Optional[Sequence[UUID]], today: date) -> int:
         return self._sessions(batch_ids).filter(
             and_(
-                FacultyUtilization.status != "Completed",
+                FacultyUtilization.status.in_({
+                    SessionStatus.Scheduled,
+                    SessionStatus.InProgress,
+                }),
                 cast(FacultyUtilization.date_of_training, Date) == today,
             )
         ).count()
@@ -125,7 +125,10 @@ class AnalyticsRepository(IAnalyticsRepository):
         return self._sessions(batch_ids).filter(
             or_(
                 FacultyUtilization.status == "Completed",
-                FacultyUtilization.date_of_training <= now,
+                and_(
+                    FacultyUtilization.status.in_(ACTIVE_UTILIZATION_STATUSES),
+                    FacultyUtilization.date_of_training <= now,
+                ),
             ),
             or_(
                 FacultyUtilization.feedback_rating.is_(None),
@@ -135,7 +138,7 @@ class AnalyticsRepository(IAnalyticsRepository):
 
     def count_distinct_deployed_faculty(self, batch_ids: Optional[Sequence[UUID]]) -> int:
         return self._sessions(batch_ids).filter(
-            FacultyUtilization.status.in_(_DEPLOYED_STATUSES)
+            FacultyUtilization.status.in_(ACTIVE_UTILIZATION_STATUSES)
         ).with_entities(FacultyUtilization.faculty_name).distinct().count()
 
     # --- Faculty ---

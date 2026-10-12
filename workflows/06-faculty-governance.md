@@ -37,11 +37,11 @@ When logging a utilization record, the system resolves the faculty name:
 
 **Computed fields:**
 - `total_faculty_count`: Active users with `role="Faculty"`
-- `active_deployed_faculty`: Distinct faculty names in non-cancelled utilizations that match the faculty roster (case-insensitive)
+- `active_deployed_faculty`: Distinct faculty names in Scheduled, InProgress, or Completed utilizations that match the faculty roster (case-insensitive)
 - `overall_utilization_percentage`: `(active_deployed / total_faculty) * 100`, rounded to 1 decimal
 - `domain_breakdown`: For each domain:
-  - `faculty_count`: Distinct faculty names in non-cancelled deliveries for batches with matching domain
-  - `hours_scheduled`: Sum of `no_of_hours` for non-cancelled deliveries
+  - `faculty_count`: Distinct faculty names in Scheduled, InProgress, or Completed deliveries for batches with matching domain
+  - `hours_scheduled`: Sum of `no_of_hours` for those active deliveries
 
 ## Faculty Utilization Export
 

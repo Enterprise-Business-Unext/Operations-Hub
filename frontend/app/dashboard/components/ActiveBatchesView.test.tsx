@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ActiveBatchesView } from "./ActiveBatchesView";
@@ -84,42 +84,6 @@ function renderView(props: Partial<React.ComponentProps<typeof ActiveBatchesView
   return { onFilterDateChange, onRefresh };
 }
 
-function mockNativeFullscreen(panel: HTMLElement) {
-  const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
-  const originalExitFullscreen = Object.getOwnPropertyDescriptor(document, "exitFullscreen");
-  const originalRequestFullscreen = Object.getOwnPropertyDescriptor(panel, "requestFullscreen");
-  const setFullscreenElement = (element: Element | null) => {
-    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: element });
-    document.dispatchEvent(new Event("fullscreenchange"));
-  };
-
-  Object.defineProperty(panel, "requestFullscreen", {
-    configurable: true,
-    value: vi.fn(() => {
-      setFullscreenElement(panel);
-      return Promise.resolve();
-    }),
-  });
-  Object.defineProperty(document, "exitFullscreen", {
-    configurable: true,
-    value: vi.fn(() => {
-      setFullscreenElement(null);
-      return Promise.resolve();
-    }),
-  });
-
-  return () => {
-    for (const [target, key, descriptor] of [
-      [document, "fullscreenElement", originalFullscreenElement],
-      [document, "exitFullscreen", originalExitFullscreen],
-      [panel, "requestFullscreen", originalRequestFullscreen],
-    ] as const) {
-      if (descriptor) Object.defineProperty(target, key, descriptor);
-      else Reflect.deleteProperty(target, key);
-    }
-  };
-}
-
 /** StatCard renders label, value and hint as siblings, so the value is the
  *  middle child of the label's parent. The batch table heading repeats some
  *  card labels, hence the multi-match fallback to the first (card) hit. */
@@ -159,12 +123,12 @@ describe("ActiveBatchesView summary metrics", () => {
 
     renderView({ data });
 
-    expect(metricValue("Hours Scheduled")).toBe("4.0 hrs");
+    expect(metricValue("Scheduled Hours")).toBe("4.0 hrs");
     // "Dr Rao" plus the two scheduled rows, which share a trainer name.
     expect(metricValue("Faculty Deployed")).toBe("2");
   });
 
-  it("does not count delivered hours toward the planned total", () => {
+  it("does not count delivered hours toward the scheduled total", () => {
     const data: ActiveBatchesResponse = {
       filter_date: "2026-09-20",
       batches: [],
@@ -177,13 +141,13 @@ describe("ActiveBatchesView summary metrics", () => {
 
     renderView({ data });
 
-    expect(metricValue("Hours Scheduled")).toBe("0.0 hrs");
+    expect(metricValue("Scheduled Hours")).toBe("0.0 hrs");
   });
 
   it("shows zeros rather than NaN when there is no data", () => {
     renderView({ data: null });
 
-    expect(metricValue("Hours Scheduled")).toBe("0.0 hrs");
+    expect(metricValue("Scheduled Hours")).toBe("0.0 hrs");
     expect(metricValue("Ongoing Batches")).toBe("0");
     expect(screen.queryByText("Delivery Sites")).toBeNull();
     expect(screen.queryByText("Enrolled Learners")).toBeNull();
@@ -332,62 +296,72 @@ describe("ActiveBatchesView column visibility", () => {
     const [, sessionFullscreenButton] = screen.getAllByRole("button", { name: /Full Screen/ });
     const sessionPanel = sessionFullscreenButton.closest("[data-fullscreen]");
     expect(sessionPanel).toHaveAttribute("data-fullscreen", "false");
-    const restoreFullscreenApi = mockNativeFullscreen(sessionPanel as HTMLElement);
 
-    try {
-      const [, sessionFiltersButton] = screen.getAllByRole("button", { name: /^Filters/ });
-      await user.click(sessionFiltersButton);
-      expect(screen.getByLabelText("Type")).toBeTruthy();
+    const [, sessionFiltersButton] = screen.getAllByRole("button", { name: /^Filters/ });
+    await user.click(sessionFiltersButton);
+    expect(screen.getByLabelText("Type")).toBeTruthy();
 
-      await user.click(sessionFullscreenButton);
-      const fullscreenPanel = document.body.querySelector('[data-fullscreen="true"]');
-      expect(fullscreenPanel).toBe(sessionPanel);
-      expect(document.fullscreenElement).toBe(sessionPanel);
-      expect((fullscreenPanel as HTMLElement).style.position).toBe("fixed");
-      expect((fullscreenPanel as HTMLElement).style.width).toBe("100vw");
-      expect((fullscreenPanel as HTMLElement).style.height).toBe("100dvh");
-      expect((fullscreenPanel as HTMLElement).style.zIndex).toBe("1000");
+    await user.click(sessionFullscreenButton);
+    // The expanded overlay is portalled out of the panel's own position, so it
+    // is looked up on the body rather than through the original node.
+    const fullscreenPanel = document.body.querySelector('[data-fullscreen="true"]');
+    expect(fullscreenPanel).not.toBeNull();
+    expect((fullscreenPanel as HTMLElement).parentElement).toBe(document.body);
+    expect((fullscreenPanel as HTMLElement).style.position).toBe("fixed");
+    expect((fullscreenPanel as HTMLElement).style.width).toBe("100vw");
+    expect((fullscreenPanel as HTMLElement).style.height).toBe("100dvh");
+    expect((fullscreenPanel as HTMLElement).style.zIndex).toBe("1000");
+    expect(document.body.style.overflow).toBe("hidden");
 
-      expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
-      expect(screen.getByLabelText("Type")).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
+    expect(screen.getByLabelText("Type")).toBeTruthy();
 
-      const [, sessionSort] = screen.getAllByLabelText("Sort by") as unknown as HTMLSelectElement[];
-      await user.selectOptions(sessionSort, "sequence");
-      const sessionTable = fullscreenPanel?.querySelector("table");
-      const sequenceColumn = Array.from(sessionTable?.querySelectorAll("thead th") ?? []).findIndex(
-        (header) => header.textContent === "Sequence"
-      );
-      const sequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
-        (row) => row.children[sequenceColumn]?.textContent?.trim()
-      );
-      expect(sequenceValues).toEqual(["4", "2"]);
-      await user.click(screen.getByRole("button", { name: "Sort ascending" }));
-      const ascendingSequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
-        (row) => row.children[sequenceColumn]?.textContent?.trim()
-      );
-      expect(ascendingSequenceValues).toEqual(["2", "4"]);
+    const [, sessionSort] = screen.getAllByLabelText("Sort by") as unknown as HTMLSelectElement[];
+    await user.selectOptions(sessionSort, "sequence");
+    const sessionTable = fullscreenPanel?.querySelector("table");
+    const sequenceColumn = Array.from(sessionTable?.querySelectorAll("thead th") ?? []).findIndex(
+      (header) => header.textContent === "Sequence"
+    );
+    const sequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
+      (row) => row.children[sequenceColumn]?.textContent?.trim()
+    );
+    expect(sequenceValues).toEqual(["4", "2"]);
+    await user.click(screen.getByRole("button", { name: "Sort ascending" }));
+    const ascendingSequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
+      (row) => row.children[sequenceColumn]?.textContent?.trim()
+    );
+    expect(ascendingSequenceValues).toEqual(["2", "4"]);
 
-      await user.selectOptions(screen.getByLabelText("Type"), "scheduled");
-      expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
-      expect(screen.queryByRole("cell", { name: "2" })).toBeNull();
+    await user.selectOptions(screen.getByLabelText("Type"), "scheduled");
+    expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
+    expect(screen.queryByRole("cell", { name: "2" })).toBeNull();
 
-      const [, sessionColumnsButton] = screen.getAllByRole("button", { name: /Columns/ });
-      await user.click(sessionColumnsButton);
-      await user.click(screen.getByRole("checkbox", { name: "Sequence" }));
+    const [, sessionColumnsButton] = screen.getAllByRole("button", { name: /Columns/ });
+    await user.click(sessionColumnsButton);
+    await user.click(screen.getByRole("checkbox", { name: "Sequence" }));
 
-      expect(screen.queryByRole("columnheader", { name: "Sequence" })).toBeNull();
-      expect(screen.queryByRole("cell", { name: "4" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Sequence" })).toBeNull();
+    expect(screen.queryByRole("cell", { name: "4" })).toBeNull();
 
-      await user.click(screen.getByRole("button", { name: /Show all columns/ }));
-      expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
-      expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Show all columns/ }));
+    expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
 
-      await user.click(screen.getByRole("button", { name: /Exit Full Screen/ }));
-      expect(document.fullscreenElement).toBeNull();
-      expect(document.querySelector('[data-fullscreen="false"]')).not.toBeNull();
-    } finally {
-      restoreFullscreenApi();
-    }
+    // Escape is the way out of the CSS overlay the same way it is out of
+    // native fullscreen, so the sessions table has to answer it too.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.body.querySelector('[data-fullscreen="true"]')).toBeNull();
+    expect(document.body.style.overflow).toBe("");
+    expect(screen.queryByRole("button", { name: /Exit Full Screen/ })).toBeNull();
+    const [, collapsedSessionButton] = screen.getAllByRole("button", { name: /Full Screen/ });
+    expect(collapsedSessionButton.closest("[data-fullscreen]")).toHaveAttribute("data-fullscreen", "false");
+
+    // The exit button still takes the panel back down afterwards.
+    await user.click(collapsedSessionButton);
+    expect(document.body.querySelector('[data-fullscreen="true"]')).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: /Exit Full Screen/ }));
+    expect(document.body.querySelector('[data-fullscreen="true"]')).toBeNull();
+    expect(document.body.style.overflow).toBe("");
   });
 });
 
@@ -398,9 +372,12 @@ describe("ActiveBatchesView row click", () => {
     const batch = makeBatch();
     renderView({ data: makeResponse({ batches: [batch] }), onOpenBatchDetail });
 
-    const row = screen.getByRole("row", { name: "Open details for batch BATCH_001" });
+    // The fixture's session shares the batch code, so the query is scoped to
+    // the batches table rather than matching both rows.
+    const [batchTable] = screen.getAllByRole("table");
+    const row = within(batchTable).getByRole("row", { name: "Open details for batch BATCH_001" });
     await user.click(row);
-    expect(onOpenBatchDetail).toHaveBeenCalledWith(batch);
+    expect(onOpenBatchDetail).toHaveBeenCalledWith("BATCH_001");
 
     row.focus();
     await user.keyboard("{Enter}");
@@ -408,6 +385,52 @@ describe("ActiveBatchesView row click", () => {
 
     await user.keyboard(" ");
     expect(onOpenBatchDetail).toHaveBeenCalledTimes(3);
+  });
+
+  it("opens the parent batch from a session row", async () => {
+    const user = userEvent.setup();
+    const onOpenBatchDetail = vi.fn();
+    renderView({
+      data: makeResponse({
+        sessions: [makeSession({ id: "s-1", batch_id: "BATCH_002", batch_name: "Data Engineering" })],
+      }),
+      onOpenBatchDetail,
+    });
+
+    const [, sessionTable] = screen.getAllByRole("table");
+    const row = within(sessionTable).getByRole("row", { name: "Open details for batch BATCH_002" });
+    await user.click(row);
+    expect(onOpenBatchDetail).toHaveBeenCalledWith("BATCH_002");
+
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(onOpenBatchDetail).toHaveBeenCalledTimes(2);
+
+    await user.keyboard(" ");
+    expect(onOpenBatchDetail).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves session rows without a batch code inert", async () => {
+    const user = userEvent.setup();
+    const onOpenBatchDetail = vi.fn();
+    renderView({
+      data: makeResponse({ sessions: [makeSession({ id: "s-1", batch_id: "" })] }),
+      onOpenBatchDetail,
+    });
+
+    const [, sessionTable] = screen.getAllByRole("table");
+    expect(within(sessionTable).queryByRole("row", { name: /Open details for batch/ })).toBeNull();
+
+    const row = within(sessionTable).getByText("Python Basics").closest("tr") as HTMLElement;
+    await user.click(row);
+    expect(onOpenBatchDetail).not.toHaveBeenCalled();
+  });
+
+  it("leaves session rows inert when no detail handler is supplied", () => {
+    renderView({ data: makeResponse() });
+
+    const [, sessionTable] = screen.getAllByRole("table");
+    expect(within(sessionTable).queryByRole("row", { name: /Open details for batch/ })).toBeNull();
   });
 
   it("leaves rows inert when no detail handler is supplied", () => {
@@ -435,5 +458,43 @@ describe("ActiveBatchesView empty states", () => {
     expect(screen.getByText("No batches match the current filters")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.queryByText("No batches match the current filters")).toBeNull();
+  });
+
+  it("says every status is shown when the date has no sessions", () => {
+    renderView({ data: makeResponse({ batches: [], sessions: [], total_batches: 0, total_sessions: 0 }) });
+
+    expect(
+      screen.getByText("All statuses for this date are shown, including cancelled, not conducted, and completed.")
+    ).toBeTruthy();
+  });
+
+  it("counts cancelled and completed sessions toward the scheduled hours", () => {
+    renderView({
+      data: makeResponse({
+        sessions: [
+          makeSession({ id: "s-1", status: "Cancelled", duration_hours: 2 }),
+          makeSession({ id: "s-2", status: "Completed", duration_hours: 1.5 }),
+        ],
+      }),
+    });
+
+    expect(metricValue("Scheduled Hours")).toBe("3.5 hrs");
+  });
+
+  it("renders cancelled, not conducted and completed sessions as rows", () => {
+    renderView({
+      data: makeResponse({
+        sessions: [
+          makeSession({ id: "s-1", status: "Cancelled" }),
+          makeSession({ id: "s-2", status: "Not Conducted", module: "Advanced Python" }),
+          makeSession({ id: "s-3", status: "Completed", module: "Capstone" }),
+        ],
+      }),
+    });
+
+    const [, sessionTable] = screen.getAllByRole("table");
+    expect(within(sessionTable).getByText("Cancelled")).toBeTruthy();
+    expect(within(sessionTable).getByText("Not Conducted")).toBeTruthy();
+    expect(within(sessionTable).getByText("Completed")).toBeTruthy();
   });
 });

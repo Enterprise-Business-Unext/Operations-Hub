@@ -32,7 +32,7 @@ def test_normalize_legacy_session_statuses():
         )).scalars().all()
 
     assert training_statuses == [
-        "Completed", "Completed", "Completed", "Completed",
-        "Scheduled", "Scheduled", "Scheduled", "Completed",
+        "Cancelled", "NotConducted", "NotConducted", "Rescheduled",
+        "InProgress", "InProgress", "Scheduled", "Completed",
     ]
-    assert utilization_statuses == ["Completed", "Scheduled", "Completed"]
+    assert utilization_statuses == ["Cancelled", "InProgress", "Completed"]

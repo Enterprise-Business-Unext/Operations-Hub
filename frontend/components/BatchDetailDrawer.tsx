@@ -10,11 +10,11 @@ import {
 import { PaginationControls } from "@/components/PaginationControls";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, CreateSessionPayload,
-  api, BatchOption, ScheduledSession, FacultyType, Vertical
+  api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
-import { notifyError } from "@/lib/notify";
-import { usePrompt } from "@/components/ConfirmProvider";
+import { notifyError, notifySuccess } from "@/lib/notify";
+import { useConfirm, usePrompt } from "@/components/ConfirmProvider";
 import {
   ColumnsMenu, ExportButton, FullscreenTable, PlainHeaderCell, SortableHeaderCell,
   TableCaption, TableFilters, TableMenu, TableStateRow, type MenuItem
@@ -37,7 +37,7 @@ import {
   X, Calendar, Users, Clock, CheckCircle2,
   Lock, Building2, Plus, Upload, AlertCircle, AlertTriangle,
   PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check,
-  Edit3, GraduationCap, Mail, Search,
+  Edit3, GraduationCap, Mail, Search, Trash2,
   PauseCircle, Ban
 } from "lucide-react";
 
@@ -235,10 +235,12 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     accommodations: BatchOption[];
     delivery_modes: BatchOption[];
     faculty_types: FacultyType[];
+    program_types: ProgramType[];
     verticals: Vertical[];
-  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], verticals: [] });
+  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], program_types: [], verticals: [] });
 
   const requestText = usePrompt();
+  const confirmAction = useConfirm();
 
   const [activeTab, setActiveTab] = useState<BatchDetailTab>(initialTab);
 
@@ -271,9 +273,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         api.getBatchOptions("accommodations").catch(() => []),
         api.getBatchOptions("delivery-modes").catch(() => []),
         api.getFacultyTypes().catch(() => []),
+        api.getProgramTypes().catch(() => []),
         api.getVerticals().catch(() => []),
-      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, verticals]) => {
-        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, verticals });
+      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, program_types, verticals]) => {
+        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, program_types, verticals });
       });
     }
   }, [isOpen]);
@@ -283,6 +286,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [editForm, setEditForm] = useState<Partial<Batch>>({});
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [isDeletingBlockers, setIsDeletingBlockers] = useState(false);
+  const [blockerDeleteError, setBlockerDeleteError] = useState<string | null>(null);
 
   const openEditModal = () => {
     const target = activeBatch;
@@ -302,11 +307,12 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       training_days: target.training_days,
       total_hours: target.total_hours,
       total_enrollments: target.total_enrollments,
-      non_residential_enrollments: target.non_residential_enrollments,
       faculty_assigned_text: target.faculty_assigned_text,
       remarks: target.remarks,
     });
     setEditError(null);
+    setBlockerDeleteError(null);
+    if (scheduledSessions.length === 0 && !isLoadingSessions) loadSessions();
     setIsEditModalOpen(true);
   };
 
@@ -314,18 +320,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     e.preventDefault();
     const target = activeBatch;
     if (!target) return;
+    if (editEndDateBlockers.length > 0) {
+      setEditError(
+        `${editEndDateBlockers.length} scheduled session(s) still fall after the new conclusion date. Delete them below before saving.`
+      );
+      return;
+    }
     setIsSavingEdit(true);
     setEditError(null);
     try {
       const payload: Partial<Batch> = {
-        ...editForm,
+        program_name: editForm.program_name,
+        client_name: editForm.client_name,
         sow_number: editForm.sow_number ? String(editForm.sow_number).trim() : undefined,
+        domain: editForm.domain,
+        technology: editForm.technology,
+        delivery_mode_id: editForm.delivery_mode_id,
+        location_city: editForm.location_city,
         start_date: editForm.start_date ? new Date(editForm.start_date).toISOString() : undefined,
         end_date: editForm.end_date ? new Date(editForm.end_date).toISOString() : undefined,
         training_days: Number(editForm.training_days) || 0,
         total_hours: Number(editForm.total_hours) || 0,
         total_enrollments: Number(editForm.total_enrollments) || 0,
-        non_residential_enrollments: Number(editForm.non_residential_enrollments) || 0,
+        faculty_assigned_text: editForm.faculty_assigned_text,
+        remarks: editForm.remarks,
       };
       const updated = await api.updateBatch(target.id, payload);
       setCurrentBatch(updated);
@@ -400,23 +418,60 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const scheduledSessionCount = scheduledSessions.length;
+
+  // End-date reduction blockers. ISO `YYYY-MM-DD` strings compare
+  // lexicographically, so the reduction is a plain string compare against the
+  // stored batch window; only a strictly-earlier date counts as a reduction.
+  const editEndDate = typeof editForm.end_date === "string" ? editForm.end_date : "";
+  const isReducingEndDate = Boolean(
+    editEndDate && activeBatch.end_date && editEndDate < activeBatch.end_date.split("T")[0]
+  );
+  const editEndDateBlockers = useMemo(
+    () =>
+      isReducingEndDate
+        ? scheduledSessions.filter((session) => session.session_date > editEndDate)
+        : [],
+    [isReducingEndDate, scheduledSessions, editEndDate]
+  );
+  const deletableBlockers = useMemo(
+    () =>
+      editEndDateBlockers.filter(
+        (session) => session.status !== "Completed" && !session.utilization_logged
+      ),
+    [editEndDateBlockers]
+  );
+  const remainingInWindowSessions = useMemo(
+    () =>
+      isReducingEndDate
+        ? scheduledSessions.filter((session) => session.session_date <= editEndDate)
+        : [],
+    [isReducingEndDate, scheduledSessions, editEndDate]
+  );
+  const suggestedWindowHours = useMemo(
+    () =>
+      Math.round(
+        remainingInWindowSessions.reduce((sum, session) => sum + (session.duration_hours || 0), 0) * 100
+      ) / 100,
+    [remainingInWindowSessions]
+  );
 
   // Computed session stats
-  const completedSessions = sessions.filter((s) => s.status === "Completed").length;
-  const allSessionsCompleted = sessions.length > 0 && completedSessions === sessions.length;
-
   // Checkpoint 1 progress is derived from the two datasets the drawer already
   // loads: `scheduledSessions` is the planned curriculum, `sessions` the actual
   // delivery ledger. The batch average itself is never recomputed here — the
   // backend writes it once and is the authority.
-  const TERMINAL_DELIVERY_STATUSES = ["Completed"];
+  const TERMINAL_DELIVERY_STATUSES = ["Completed", "Cancelled", "Not Conducted"];
   const checkpoint1Progress = useMemo(() => {
-    const plannedDays = scheduledSessions; // All scheduled sessions count as planned (no Cancelled status)
+    const plannedDays = scheduledSessions;
     const planned = plannedDays.length;
-    const logged = plannedDays.filter((s) => s.utilization_logged).length;
     const closed = plannedDays.filter((s) => TERMINAL_DELIVERY_STATUSES.includes(s.status)).length;
-    return { planned, logged, closed };
+    return { planned, closed };
   }, [scheduledSessions]);
+  const allSessionsTerminal = useMemo(() => {
+    return [...scheduledSessions.map((session) => session.status), ...sessions.map((session) => session.status)]
+      .every((status) => TERMINAL_DELIVERY_STATUSES.includes(status));
+  }, [scheduledSessions, sessions]);
 
   // Log Faculty Utilization on Session Day Modal
   const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
@@ -430,13 +485,15 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [utilDeliveryMode, setUtilDeliveryMode] = useState("Online");
   const [utilVenue, setUtilVenue] = useState("");
   const [utilCity, setUtilCity] = useState("");
-  const [utilStatus, setUtilStatus] = useState("Completed");
+  const [utilStatus, setUtilStatus] = useState("Scheduled");
   const [utilFeedbackCollected, setUtilFeedbackCollected] = useState<"yes" | "no" | null>(null);
   const [utilFeedbackRating, setUtilFeedbackRating] = useState("");
   const [utilFeedbackNotes, setUtilFeedbackNotes] = useState("");
-  const [utilOutcomeReason, setUtilOutcomeReason] = useState("");
   const [utilVertical, setUtilVertical] = useState("");
   const [utilFacultyTypeId, setUtilFacultyTypeId] = useState("");
+  // Program type is an FK (`program_type_id`), so the select binds the option id
+  // — unlike Vertical, which stores the name because `Batch.vertical` is a String.
+  const [utilProgramTypeId, setUtilProgramTypeId] = useState("");
   const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
   const [utilError, setUtilError] = useState<string | null>(null);
   const [utilConflicts, setUtilConflicts] = useState<string[]>([]);
@@ -495,13 +552,13 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     // into the ledger, so it starts empty and the coordinator fills it in.
     setUtilVenue("");
     setUtilCity(target?.location_city || "");
-    setUtilStatus("Completed");
+    setUtilStatus("Scheduled");
     setUtilFeedbackCollected(null);
     setUtilFeedbackRating("");
     setUtilFeedbackNotes("");
-    setUtilOutcomeReason("");
     setUtilVertical("");
     setUtilFacultyTypeId("");
+    setUtilProgramTypeId("");
     setUtilError(null);
     setUtilConflicts([]);
     setShowDiscardPrompt(false);
@@ -552,10 +609,20 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       setUtilError(utilTimeError);
       return;
     }
-    // No longer need outcome reason validation for Cancelled/Not Conducted statuses
-    // since those statuses have been removed. Only Completed status is used.
     if (!options.verticals.length) {
       setUtilError("No delivery verticals are configured. Ask an admin to add one in Settings, then reload.");
+      return;
+    }
+    if (!options.program_types.length) {
+      setUtilError("No program types are configured. Ask an admin to add one in Settings, then reload.");
+      return;
+    }
+    if (!utilProgramTypeId) {
+      setUtilError("Program Type is required");
+      return;
+    }
+    if (!utilFacultyTypeId) {
+      setUtilError("Faculty Type is required");
       return;
     }
     if (!utilVertical) {
@@ -580,9 +647,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         return;
       }
       const feedbackEntered = utilFeedbackCollected === "yes" && ratingValue !== null;
-      // `faculty_type_id` is accepted by the endpoint but is missing from the
-      // shared `CreateSessionPayload`, so it is declared alongside it here.
-      const payload: CreateSessionPayload & { faculty_type_id?: string } = {
+      const payload: CreateSessionPayload = {
         batch_id: target.id,
         training_session_id: selectedScheduleDay.id,
         date_of_training: dateOfTrainingIso,
@@ -599,7 +664,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         feedback_rating: feedbackEntered ? ratingValue : undefined,
         feedback_notes: utilFeedbackCollected === "yes" && utilFeedbackNotes.trim() ? utilFeedbackNotes.trim() : undefined,
         vertical: utilVertical,
-        faculty_type_id: utilFacultyTypeId || undefined,
+        faculty_type_id: utilFacultyTypeId,
+        program_type_id: utilProgramTypeId || undefined,
       };
       await api.createSession(payload);
       setIsLogUtilizationOpen(false);
@@ -641,6 +707,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   });
   const [isSavingScheduledEdit, setIsSavingScheduledEdit] = useState(false);
   const [scheduledEditError, setScheduledEditError] = useState<string | null>(null);
+  const [deletingScheduledSessionId, setDeletingScheduledSessionId] = useState<string | null>(null);
 
   // Gate 1 Feedback Modal
   const [completingSession, setCompletingSession] = useState<TrainingSession | null>(null);
@@ -672,6 +739,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [ingestFile, setIngestFile] = useState<File | null>(null);
   const [isIngesting, setIsIngesting] = useState(false);
   const [extractedRows, setExtractedRows] = useState<ExtractedScheduleRow[]>([]);
+  const [hasParsedTimetable, setHasParsedTimetable] = useState(false);
   const [validationConflicts, setValidationConflicts] = useState<ConflictDetail[]>([]);
   const [isValidating, setIsValidating] = useState(false);
   const [hasValidated, setHasValidated] = useState(false);
@@ -707,6 +775,16 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const timetableVisibleColumnCount = TIMETABLE_COLUMN_KEYS.filter((column) =>
     timetableColumns.isVisible(column.key)
   ).length;
+
+  const removeExtractedScheduleRow = (index: number) => {
+    setExtractedRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+    setEditingParsedRow((editingIndex) => {
+      if (editingIndex === null || editingIndex === index) return null;
+      return editingIndex > index ? editingIndex - 1 : editingIndex;
+    });
+    setHasValidated(false);
+    setValidationConflicts([]);
+  };
 
   useEffect(() => {
     setTimetablePage(1);
@@ -808,6 +886,61 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     }
   };
 
+  const deleteScheduledSession = async (session: ScheduledSession) => {
+    const confirmed = await confirmAction({
+      title: "Delete scheduled session?",
+      description: `This permanently removes "${session.module}" from the batch timetable. A session with a linked delivery record cannot be deleted.`,
+      confirmLabel: "Delete session",
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    setDeletingScheduledSessionId(session.id);
+    try {
+      await api.deleteScheduledSession(session.id);
+      await loadSessions();
+      notifySuccess("Scheduled session deleted");
+    } catch (error) {
+      notifyError("Failed to delete scheduled session", error);
+    } finally {
+      setDeletingScheduledSessionId(null);
+    }
+  };
+
+  // Bulk escape hatch for a reduced conclusion date: every out-of-window row
+  // must go before the batch PATCH can succeed. Deletions go through the
+  // per-row endpoint, so a mid-loop failure reloads whatever remains and the
+  // panel re-renders with the still-blocking rows.
+  const handleDeleteOutOfWindowSessions = async () => {
+    const targets = deletableBlockers;
+    if (targets.length === 0) return;
+    const confirmed = await confirmAction({
+      title: `Delete ${targets.length} scheduled session(s)?`,
+      description: `This permanently removes ${targets
+        .map((session) => `${session.session_date} "${session.module}"`)
+        .join(", ")} from the batch timetable. A session with a linked delivery record cannot be deleted.`,
+      confirmLabel: "Delete sessions",
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    setIsDeletingBlockers(true);
+    setBlockerDeleteError(null);
+    try {
+      for (const session of targets) {
+        await api.deleteScheduledSession(session.id);
+      }
+      await loadSessions();
+      notifySuccess(`Deleted ${targets.length} scheduled session(s)`);
+    } catch (error) {
+      setBlockerDeleteError("Some sessions could not be deleted. Remaining sessions still block the save.");
+      notifyError("Failed to delete scheduled sessions", error);
+      await loadSessions();
+    } finally {
+      setIsDeletingBlockers(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen && batchId) {
       loadSessions();
@@ -883,6 +1016,68 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setCompletingSession(session);
     setGate1Rating(4.5);
     setGate1Feedback("");
+  };
+
+  const handleSessionOutcome = async (
+    session: TrainingSession,
+    outcome: "cancel" | "not-conducted",
+  ) => {
+    const reason = await requestText({
+      title: outcome === "cancel" ? "Cancel session" : "Mark session not conducted",
+      defaultValue: "",
+      confirmLabel: "Save outcome",
+    });
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      notifyError("A reason of at least 3 characters is required");
+      return;
+    }
+    try {
+      if (outcome === "cancel") {
+        await api.cancelSession(session.id, reason.trim());
+      } else {
+        await api.markSessionNotConducted(session.id, reason.trim());
+      }
+      await loadSessions();
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      notifyError("Failed to update session outcome", err);
+    }
+  };
+
+  const handleRescheduleSession = async (session: TrainingSession) => {
+    const date = await requestText({
+      title: "Reschedule session date (YYYY-MM-DD)",
+      defaultValue: session.date_of_training.slice(0, 10),
+      confirmLabel: "Continue",
+    });
+    if (date === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim()) || Number.isNaN(Date.parse(`${date.trim()}T00:00:00Z`))) {
+      notifyError("Enter a valid date in YYYY-MM-DD format");
+      return;
+    }
+    const reason = await requestText({
+      title: "Reason for rescheduling",
+      defaultValue: "",
+      confirmLabel: "Reschedule",
+    });
+    if (reason === null) return;
+    if (reason.trim().length < 3) {
+      notifyError("A reason of at least 3 characters is required");
+      return;
+    }
+    try {
+      await api.rescheduleSession(session.id, {
+        date_of_training: `${date.trim()}T00:00:00Z`,
+        start_time: session.start_time || undefined,
+        end_time: session.end_time || undefined,
+        reason: reason.trim(),
+      });
+      await loadSessions();
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      notifyError("Failed to reschedule session", err);
+    }
   };
 
   // Handle Add Single Session
@@ -1006,6 +1201,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         ? res.extracted_schedule
         : Array.isArray(res.items) ? res.items : [];
       setExtractedRows(rows);
+      setHasParsedTimetable(true);
       setIngestSummary({
         message: res.message || "Timetable processed.",
         extractedRows: res.extracted_rows ?? rows.length,
@@ -1072,6 +1268,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
       setIsIngestModalOpen(false);
       setExtractedRows([]);
+      setHasParsedTimetable(false);
       setIngestFile(null);
       await loadSessions();
       if (onBatchUpdated) onBatchUpdated();
@@ -1174,9 +1371,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       selected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
                     )}
                   >
-                    <span aria-hidden>{scheduledSessions.length}d / {sessions.length} logged</span>
+                    <span aria-hidden>{scheduledSessionCount} sessions / {sessions.length} logged</span>
                     <span className="sr-only">
-                      {scheduledSessions.length} scheduled days, {sessions.length} logged utilization sessions
+                      {scheduledSessionCount} scheduled sessions, {sessions.length} logged utilization sessions
                     </span>
                   </span>
                 )}
@@ -1825,7 +2022,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, background: "#f8fafc", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
                         <PanelTitle
-                          title={`Curriculum Schedule (${scheduledSessions.length} ${scheduledSessions.length === 1 ? "Day" : "Days"})`}
+                          title={`Curriculum Schedule (${scheduledSessionCount} ${scheduledSessionCount === 1 ? "Session" : "Sessions"})`}
                         />
                         <div style={{ display: "flex", gap: 8 }}>
                           <Badge variant="success" size="sm" className="normal-case tracking-normal">
@@ -1869,8 +2066,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                               fontSize: "0.75rem",
                               flexShrink: 0
                             }}>
-                              <span style={{ fontSize: "0.65rem", textTransform: "uppercase", opacity: 0.8 }}>Day</span>
-                              <span style={{ fontSize: "0.95rem" }}>{s.sequence_number || idx + 1}</span>
+                              <span style={{ fontSize: "0.65rem", textTransform: "uppercase", opacity: 0.8 }}>Session</span>
+                              <span style={{ fontSize: "0.95rem" }}>{idx + 1}</span>
                             </div>
 
                             <div>
@@ -1936,6 +2133,18 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                                 </button>
                                 <button
                                   type="button"
+                                  onClick={() => deleteScheduledSession(s)}
+                                  className="btn btn-secondary"
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", fontSize: "0.8rem" }}
+                                  title="Delete scheduled session"
+                                  aria-label={`Delete scheduled session ${idx + 1}: ${s.module}`}
+                                  disabled={deletingScheduledSessionId === s.id}
+                                >
+                                  <Trash2 size={14} />
+                                  <span>{deletingScheduledSessionId === s.id ? "Deleting…" : "Delete"}</span>
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => openLogUtilizationModal(s)}
                                   className="btn btn-primary"
                                   style={{
@@ -1976,6 +2185,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                               <PlainHeaderCell style={{ ...TIMETABLE_TH_STYLE, textAlign: "center" }}>Hours</PlainHeaderCell>
                               <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Mode</PlainHeaderCell>
                               <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Session Status</PlainHeaderCell>
+                              <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Actions</PlainHeaderCell>
                             </tr>
                           </thead>
                           <tbody>
@@ -1987,6 +2197,48 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                                 <td style={{ ...TIMETABLE_TD_STYLE, textAlign: "center" }}>{s.no_of_hours}h</td>
                                 <td style={TIMETABLE_TD_STYLE}>{s.mode_of_delivery}</td>
                                 <td style={TIMETABLE_TD_STYLE}>{s.status}</td>
+                                <td style={{ ...TIMETABLE_TD_STYLE, whiteSpace: "nowrap" }}>
+                                  {s.status !== "Completed" && (
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                      {(s.status === "Scheduled" || s.status === "InProgress") && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="btn btn-primary"
+                                            onClick={() => openGate1Modal(s)}
+                                            style={{ padding: "5px 8px", fontSize: "0.75rem" }}
+                                          >
+                                            Submit Feedback
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={() => handleSessionOutcome(s, "cancel")}
+                                            style={{ padding: "5px 8px", fontSize: "0.75rem" }}
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={() => handleSessionOutcome(s, "not-conducted")}
+                                            style={{ padding: "5px 8px", fontSize: "0.75rem" }}
+                                          >
+                                            Not Conducted
+                                          </button>
+                                        </>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => handleRescheduleSession(s)}
+                                        style={{ padding: "5px 8px", fontSize: "0.75rem" }}
+                                      >
+                                        Reschedule
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -2041,10 +2293,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </div>
                   <div>
                     <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Delivery Progress</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: checkpoint1Progress.logged === checkpoint1Progress.planned ? "#16a34a" : "#0b5cab", marginTop: 2 }}>
+                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: checkpoint1Progress.closed === checkpoint1Progress.planned ? "#16a34a" : "#0b5cab", marginTop: 2 }}>
                       {checkpoint1Progress.closed} / {checkpoint1Progress.planned}
-                      {checkpoint1Progress.logged === checkpoint1Progress.planned && (
-                        <span style={{ fontSize: "0.7rem", marginLeft: 6, color: "#16a34a", fontWeight: 700 }}>✓ All Logged</span>
+                      {checkpoint1Progress.closed === checkpoint1Progress.planned && checkpoint1Progress.planned > 0 && (
+                        <span style={{ fontSize: "0.7rem", marginLeft: 6, color: "#16a34a", fontWeight: 700 }}>✓ All Outcomes Recorded</span>
                       )}
                     </div>
                   </div>
@@ -2136,13 +2388,31 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                          fontWeight: 600,
                        }}>
                          <Lock size={15} />
-                         <span>Quality Checkpoint 1 must be completed first — the average batch feedback is written once every delivery is logged.</span>
+                         <span>Quality Checkpoint 1 requires at least one completed session with a feedback rating.</span>
+                       </div>
+                     )}
+                     {activeBatch.batch_avg_feedback != null && !allSessionsTerminal && (
+                       <div style={{
+                         background: "#fffbeb",
+                         border: "1px solid #fde68a",
+                         borderRadius: 6,
+                         padding: "12px 14px",
+                         display: "flex",
+                         alignItems: "center",
+                         gap: 8,
+                         color: "#b45309",
+                         fontSize: "0.82rem",
+                         fontWeight: 600,
+                       }}>
+                         <Lock size={15} />
+                         <span>Every scheduled and logged session needs a terminal outcome before Gate 2 closure.</span>
                        </div>
                      )}
                      <button
                        onClick={() => setIsGate2ModalOpen(true)}
+                       disabled={activeBatch.batch_avg_feedback == null || !allSessionsTerminal}
                        className="btn btn-primary"
-                       style={{ display: "flex", alignItems: "center", gap: 6 }}
+                       style={{ display: "flex", alignItems: "center", gap: 6, opacity: activeBatch.batch_avg_feedback == null || !allSessionsTerminal ? 0.55 : 1 }}
                      >
                        <Sparkles size={16} />
                        <span>Execute NPS Closure (Close Batch)</span>
@@ -2643,7 +2913,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           {ingestError && <ErrorBanner message={ingestError} className="mb-3" />}
 
           {/* File Upload Section */}
-          {extractedRows.length === 0 ? (
+          {!hasParsedTimetable ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {ingestSummary && (
                   <div style={{
@@ -2768,6 +3038,16 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                                 {editingParsedRow === i ? <Check size={13} aria-hidden="true" /> : <Edit3 size={13} aria-hidden="true" />}
                                 {editingParsedRow === i ? "Done" : "Edit"}
                               </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}
+                                aria-label={`Delete timetable row ${i + 1}`}
+                                onClick={() => removeExtractedScheduleRow(i)}
+                              >
+                                <Trash2 size={13} aria-hidden="true" />
+                                Delete
+                              </button>
                             </td>
                           </tr>
                         ))
@@ -2780,6 +3060,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   <button
                     onClick={() => {
                       setExtractedRows([]);
+                      setHasParsedTimetable(false);
                       setHasValidated(false);
                       setValidationConflicts([]);
                     }}
@@ -2989,6 +3270,95 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 />
               </div>
 
+              {isReducingEndDate && (
+                <div style={{ gridColumn: "1 / -1", background: "#f8fafc", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: "12px 14px" }}>
+                  {editEndDateBlockers.length > 0 ? (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", fontWeight: 700, color: "var(--text-main)" }}>
+                        <AlertTriangle size={15} aria-hidden="true" style={{ color: "#b45309" }} />
+                        Conclusion date is being reduced
+                      </div>
+                      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "6px 0 10px" }}>
+                        {editEndDateBlockers.length} scheduled session(s) fall after {formatDate(editForm.end_date)} and must be
+                        deleted before the batch end date can be reduced.
+                      </p>
+                      <div style={{ maxHeight: 150, overflowY: "auto", display: "grid", gap: 6 }}>
+                        {editEndDateBlockers.map((session) => {
+                          const deletable = session.status !== "Completed" && !session.utilization_logged;
+                          return (
+                            <div
+                              key={session.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 10,
+                                fontSize: "0.78rem",
+                                background: "#ffffff",
+                                border: "1px solid var(--border-subtle)",
+                                borderRadius: 8,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              <span style={{ color: "var(--text-main)", fontWeight: 600 }}>
+                                {formatDate(session.session_date)} · {session.module}
+                                {session.trainer_name ? ` · ${session.trainer_name}` : ""}
+                              </span>
+                              {!deletable && (
+                                <span style={{ color: "#b45309", fontWeight: 600, whiteSpace: "nowrap" }}>
+                                  Already delivered — cannot be deleted
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {deletableBlockers.length < editEndDateBlockers.length && (
+                        <p style={{ fontSize: "0.75rem", color: "#b45309", margin: "8px 0 0" }}>
+                          Completed or delivered sessions cannot be deleted; the end date cannot move past them.
+                        </p>
+                      )}
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={deletableBlockers.length === 0 || isDeletingBlockers}
+                          onClick={handleDeleteOutOfWindowSessions}
+                        >
+                          {isDeletingBlockers ? "Deleting..." : `Delete ${deletableBlockers.length} sessions`}
+                        </button>
+                        <span style={{ fontSize: "0.72rem", color: "var(--text-dim)" }}>
+                          To keep a session, reschedule it into the window from the Curriculum Schedule tab instead.
+                        </span>
+                      </div>
+                      {blockerDeleteError && <ErrorBanner message={blockerDeleteError} className="mt-2" />}
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-main)" }}>
+                        Conclusion date is being reduced
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                          Match the schedule: {remainingInWindowSessions.length} training days, {suggestedWindowHours} hours
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => setEditForm((prev) => ({
+                            ...prev,
+                            training_days: remainingInWindowSessions.length,
+                            total_hours: suggestedWindowHours,
+                          }))}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
                   Total Candidate Headcount
@@ -2999,19 +3369,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   onChange={(e) => setEditForm((prev) => ({ ...prev, total_enrollments: Number(e.target.value) }))}
                   className="glass-input"
                   min={1}
-                />
-              </div>
-
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Non-Residential Enrollments
-                </label>
-                <input
-                  type="number"
-                  value={editForm.non_residential_enrollments ?? 0}
-                  onChange={(e) => setEditForm((prev) => ({ ...prev, non_residential_enrollments: Number(e.target.value) }))}
-                  className="glass-input"
-                  min={0}
                 />
               </div>
 
@@ -3051,7 +3408,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSavingEdit}
+                  disabled={isSavingEdit || editEndDateBlockers.length > 0}
                   className="btn btn-primary"
                 >
                   {isSavingEdit ? "Saving..." : "Save Changes"}
@@ -3442,17 +3799,18 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </span>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                   <div>
-                    <label htmlFor="util-faculty-type" style={UTIL_LABEL}>Faculty Type</label>
+                    <label htmlFor="util-faculty-type" style={UTIL_LABEL}>Faculty Type *</label>
                     <select
                       id="util-faculty-type"
                       value={utilFacultyTypeId}
                       onChange={(e) => { setUtilFacultyTypeId(e.target.value); markUtilDirty(); }}
                       className="glass-input"
                       style={{ width: "100%" }}
+                      required
                     >
-                      <option value="">Not specified</option>
+                      <option value="" disabled>Select Faculty Type</option>
                       {options.faculty_types.map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.name}
@@ -3462,6 +3820,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     {options.faculty_types.length === 0 && (
                       <span style={{ fontSize: "0.72rem", color: "#b45309", marginTop: 4, display: "block" }}>
                         No faculty types configured. An admin can add them in Settings.
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="util-program-type" style={UTIL_LABEL}>Program Type *</label>
+                    <select
+                      id="util-program-type"
+                      value={utilProgramTypeId}
+                      onChange={(e) => { setUtilProgramTypeId(e.target.value); markUtilDirty(); }}
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                      required
+                    >
+                      <option value="">Select Program Type</option>
+                      {options.program_types.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    {options.program_types.length === 0 && (
+                      <span style={{ fontSize: "0.72rem", color: "#b91c1c", marginTop: 4, display: "block" }}>
+                        No program types configured. An admin must add one in Settings before utilization can be logged.
                       </span>
                     )}
                   </div>
@@ -3552,8 +3934,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     style={{ width: "100%" }}
                     required
                   >
-                    <option value="Completed">Completed / Delivered</option>
                     <option value="Scheduled">Scheduled</option>
+                    <option value="Completed">Completed</option>
                   </select>
                 </div>
               </div>
@@ -3603,7 +3985,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                         >
                           <option value="">Not rated</option>
                           {[5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1].map((score) => (
-                            <option key={score} value={score}>{score}</option>
+                            <option key={score} value={score.toFixed(2)}>{score.toFixed(2)}</option>
                           ))}
                         </select>
                         <span style={UTIL_HINT}>Feeds the batch average.</span>
@@ -3674,7 +4056,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   <button
                     type="submit"
                     form="log-utilization-form"
-                    disabled={isSubmittingUtil || Boolean(utilTimeError) || options.verticals.length === 0}
+                    disabled={isSubmittingUtil || Boolean(utilTimeError) || options.verticals.length === 0 || options.program_types.length === 0 || options.faculty_types.length === 0}
                     className="btn btn-primary"
                     style={{ padding: "8px 18px", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 6 }}
                   >
