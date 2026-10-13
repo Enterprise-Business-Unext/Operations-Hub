@@ -35,10 +35,6 @@ class ISessionRepository(ABC):
         pass
 
     @abstractmethod
-    def get_max_sequence_number(self, batch_id: UUID) -> Optional[int]:
-        pass
-
-    @abstractmethod
     def create_scheduled(self, session: TrainingSession) -> TrainingSession:
         pass
 

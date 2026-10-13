@@ -3,7 +3,7 @@ from datetime import datetime, timezone, time, date
 from decimal import Decimal
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, Uuid, UniqueConstraint, Enum
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, Text, Time, Uuid, UniqueConstraint, Enum
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -39,8 +39,6 @@ class TrainingSession(Base):
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     batch_id = Column(Uuid(as_uuid=True), ForeignKey("batches.id", ondelete="CASCADE"), nullable=False, index=True)
-    sequence_number = Column(Integer, nullable=True)
-    week = Column(String(50), nullable=True)
     session_date = Column(Date, nullable=False, index=True)
     day_name = Column(String(20), nullable=True)
     start_time = Column(Time, nullable=True)
@@ -104,6 +102,9 @@ class FacultyUtilization(Base):
     program_type = relationship("ProgramType", foreign_keys=[program_type_id], lazy="joined")
     faculty_type = relationship("FacultyType", foreign_keys=[faculty_type_id], lazy="joined")
 
+    coordinator_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    coordinator = relationship("User", foreign_keys=[coordinator_id], lazy="joined")
+
     @property
     def faculty_type_name(self) -> str | None:
         """Display name for the selected faculty type, resolved from the roster."""
@@ -131,6 +132,18 @@ class FacultyUtilization(Base):
         return self.batch.coordinator.full_name if self.batch and self.batch.coordinator else None
 
     @property
+    def coordinator_name(self) -> str | None:
+        return self.coordinator.full_name if self.coordinator else None
+
+    @property
     def module_feedback(self) -> str | None:
         """Per-delivery feedback on the module that was taught."""
         return self.feedback_notes
+
+    @property
+    def entity(self) -> str | None:
+        return self.batch.entity.name if self.batch and self.batch.entity else None
+
+    @property
+    def program(self) -> str | None:
+        return self.batch.program_name if self.batch else None

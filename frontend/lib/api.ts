@@ -172,8 +172,6 @@ export interface Batch {
   calendar_days?: number | null;
   total_hours: number;
   total_enrollments: number;
-  residential_enrollments: number;
-  non_residential_enrollments: number;
   status: "Requested" | "Approval 1 Pending" | "Approval 2 Pending" | "Approved" | "Upcoming" | "Ongoing" | "Completed" | "Cancelled" | "OnHold";
   is_schema_locked: boolean;
   approver_1_id?: string | null;
@@ -196,15 +194,12 @@ export interface Batch {
   faculty_assigned_text?: string | null;
   finance_status?: string | null;
   finance_status_check_date?: string | null;
-  finance_check?: number | null;
   batch_avg_feedback?: number | null;
   batch_nps?: number | null;
   nps_total_responses?: number | null;
   nps_promoters?: number | null;
   nps_passives?: number | null;
   nps_detractors?: number | null;
-  nps_imported_at?: string | null;
-  nps_source_filename?: string | null;
   remarks?: string | null;
   comments?: string | null;
   sessions_conducted?: number;
@@ -247,7 +242,6 @@ export interface ActiveSessionItem {
   batch_id: string;
   batch_name: string;
   session_type: "scheduled" | "actual";
-  sequence_number?: number | null;
   module: string;
   trainer_name?: string | null;
   faculty_name?: string | null;
@@ -355,13 +349,13 @@ export interface TrainingSession {
   // Serialized read-only alias of `feedback_notes` (backend models/session.py),
   // which Gate 1 also writes; the ledger's feedback text lives in one column.
   module_feedback?: string | null;
+  coordinator_id?: string | null;
+  coordinator_name?: string | null;
 }
 
 export interface ScheduledSession {
   id: string;
   batch_id: string;
-  sequence_number?: number | null;
-  week?: string | null;
   session_date: string;
   day_name?: string | null;
   start_time?: string | null;
@@ -398,6 +392,7 @@ export interface CreateSessionPayload {
   vertical?: string;
   program_type_id?: string;
   faculty_type_id: string;
+  coordinator_id?: string;
 }
 
 export interface SessionFeedbackPayload {
@@ -413,6 +408,9 @@ export interface BatchNpsClosurePayload {
   promoters_count: number;
   passive_count: number;
   detractors_count: number;
+  // Optional NPS availability fields for when NPS is not available
+  nps_available?: boolean;
+  nps_unavailable_reason?: string;
 }
 
 // Keys actually returned by PATCH /sessions/{id}/complete (gates/service.py).
@@ -1158,11 +1156,12 @@ class ApiService {
   }
 
   // Sessions APIs
-  async getSessions(params?: { batch_id?: string; faculty_name?: string; status?: string }): Promise<TrainingSession[]> {
+  async getSessions(params?: { batch_id?: string; faculty_name?: string; status?: string; all?: boolean }): Promise<TrainingSession[]> {
     const query = new URLSearchParams();
     if (params?.batch_id) query.append("batch_id", params.batch_id);
     if (params?.faculty_name) query.append("faculty_name", params.faculty_name);
     if (params?.status) query.append("status", params.status);
+    if (params?.all) query.append("all", "true");
     const suffix = query.toString() ? `?${query.toString()}` : "";
     return this.request<TrainingSession[]>(`/sessions${suffix}`);
   }

@@ -202,7 +202,7 @@ const SESSION_COLUMN_DEFS = [
     key: "module",
     label: "Module",
     accessor: (session: ActiveSessionItem) => session.module || "",
-    search: [(session: ActiveSessionItem) => session.sequence_number ?? null],
+    search: [],
   },
   { key: "person", label: "Trainer / Faculty", accessor: SESSION_VALUE.person },
   { key: "date", label: "Date", accessor: (session: ActiveSessionItem) => session.session_date ?? null },
@@ -227,10 +227,9 @@ const SESSION_COLUMN_DEFS = [
 
 type SessionColumnKey = (typeof SESSION_COLUMN_DEFS)[number]["key"] | (typeof EXTRA_SESSION_DEFS)[number]["key"];
 
-// "Sequence", "Duration" and "Location" are all sortable, and "Location" is
+// "Duration" and "Location" are all sortable, and "Location" is
 // filterable, without any of them being a column.
 const EXTRA_SESSION_DEFS: readonly TableColumnDef<ActiveSessionItem>[] = [
-  { key: "sequence", label: "Sequence", accessor: (session: ActiveSessionItem) => session.sequence_number ?? null },
   { key: "duration", label: "Duration", accessor: (session: ActiveSessionItem) => session.duration_hours ?? 0 },
   { key: "location", label: "Location", accessor: SESSION_VALUE.location, filterable: true },
 ];
@@ -240,7 +239,7 @@ const SESSION_ACCESSORS = buildSortAccessors(SESSION_ALL_DEFS);
 const SESSION_SORT_OPTIONS = buildSortOptions(SESSION_ALL_DEFS);
 const SESSION_FILTER_FIELDS = buildFilterFields(SESSION_ALL_DEFS);
 const SESSION_SEARCH_ACCESSOR = buildSearchAccessor(SESSION_COLUMN_DEFS);
-const SESSION_DESC_FIRST_KEYS = ["date", "startTime", "duration", "sequence"];
+const SESSION_DESC_FIRST_KEYS = ["date", "startTime", "duration"];
 
 const SESSION_COLUMN_KEYS: readonly { key: SessionColumnKey; label: string }[] = [
   ...SESSION_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label })),
@@ -252,7 +251,6 @@ const SESSION_EXPORT_COLUMNS: readonly CsvColumn<ActiveSessionItem>[] = [
   { key: "batch_name", label: "Batch Name" },
   { key: "session_type", label: "Type" },
   { key: "module", label: "Module" },
-  { key: "sequence_number", label: "Sequence" },
   { key: "faculty_name", label: "Faculty" },
   { key: "trainer_name", label: "Trainer" },
   { key: "session_date", label: "Date" },
@@ -496,11 +494,6 @@ function SessionRow({
       {columns.isVisible("module") && (
         <td style={{ ...CELL_STYLE, maxWidth: 260 }}>
           <div style={{ whiteSpace: "normal", color: "var(--text-main)" }}>{session.module || "—"}</div>
-          {session.sequence_number ? (
-            <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Session #{session.sequence_number}
-            </div>
-          ) : null}
         </td>
       )}
       {columns.isVisible("person") && (
@@ -530,11 +523,6 @@ function SessionRow({
         <td style={CELL_STYLE}>
           <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{session.mode_of_delivery || "Online"}</div>
           <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{location || "Remote"}</div>
-        </td>
-      )}
-      {columns.isVisible("sequence") && (
-        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
-          <div style={{ color: "var(--text-main)" }}>{session.sequence_number ?? "—"}</div>
         </td>
       )}
       {columns.isVisible("duration") && (

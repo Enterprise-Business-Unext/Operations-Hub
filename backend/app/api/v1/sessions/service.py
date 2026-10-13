@@ -82,9 +82,9 @@ class SessionService:
         session.outcome_at = datetime.now(timezone.utc)
         session.outcome_by = user_id
 
-    def list(self, batch_id: Optional[UUID], faculty_name: Optional[str], status_filter: Optional[str], user_id: Optional[UUID] = None) -> List[FacultyUtilization]:
+    def list(self, batch_id: Optional[UUID], faculty_name: Optional[str], status_filter: Optional[str], user_id: Optional[UUID] = None, all: bool = False) -> List[FacultyUtilization]:
         """Lists actual faculty delivery records (utilization ledger)."""
-        if user_id:
+        if user_id and not all:
             if batch_id:
                 batch = self.session_repo.get_batch_by_id(batch_id)
                 if batch:
@@ -127,11 +127,17 @@ class SessionService:
         result = []
         for idx, s in enumerate(scheduled_days, start=1):
             util = util_map.get(s.id)
+            # Compute week dynamically from batch.start_date
+            week_str = "—"
+            if batch.start_date and s.session_date:
+                delta_days = (s.session_date - batch.start_date).days
+                week_num = (delta_days // 7) + 1
+                week_str = f"Week {week_num}"
             result.append({
                 "id": s.id,
                 "batch_id": s.batch_id,
-                "sequence_number": s.sequence_number or idx,
-                "week": s.week,
+                "sequence_number": idx,
+                "week": week_str,
                 "session_date": s.session_date,
                 "day_name": s.day_name or s.session_date.strftime("%A"),
                 "start_time": s.start_time,
@@ -213,11 +219,9 @@ class SessionService:
                         f"{scheduled_count}; current training_days: {batch.training_days}."
                     ),
                 )
-        last_sequence = self.session_repo.get_max_sequence_number(batch.id)
         session = TrainingSession(
-            **session_in.model_dump(exclude={"batch_id", "sequence_number"}),
+            **session_in.model_dump(exclude={"batch_id"}),
             batch_id=batch.id,
-            sequence_number=session_in.sequence_number or ((last_sequence or 0) + 1),
         )
         session.status = SessionStatus(session.status)
         return self.session_repo.create_scheduled(session)

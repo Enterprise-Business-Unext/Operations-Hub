@@ -26,8 +26,6 @@ def run_migration():
             CREATE TABLE IF NOT EXISTS training_sessions (
                 id UUID PRIMARY KEY,
                 batch_id UUID NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
-                sequence_number INTEGER NULL,
-                week VARCHAR(50) NULL,
                 session_date DATE NOT NULL,
                 day_name VARCHAR(20) NULL,
                 start_time TIME NULL,

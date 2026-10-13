@@ -34,16 +34,10 @@ class SessionRepository(ISessionRepository):
     def list_scheduled_for_batch(self, batch_id: UUID) -> List[TrainingSession]:
         return self.db.query(TrainingSession).filter(
             TrainingSession.batch_id == batch_id
-        ).order_by(TrainingSession.session_date.asc(), TrainingSession.sequence_number.asc()).all()
+        ).order_by(TrainingSession.session_date.asc(), TrainingSession.module.asc()).all()
 
     def get_scheduled_by_id(self, session_id: UUID) -> Optional[TrainingSession]:
         return self.db.query(TrainingSession).filter(TrainingSession.id == session_id).first()
-
-    def get_max_sequence_number(self, batch_id: UUID) -> Optional[int]:
-        row = self.db.query(TrainingSession.sequence_number).filter(
-            TrainingSession.batch_id == batch_id
-        ).order_by(TrainingSession.sequence_number.desc()).first()
-        return row[0] if row else None
 
     def create_scheduled(self, session: TrainingSession) -> TrainingSession:
         self.db.add(session)
@@ -70,7 +64,10 @@ class SessionRepository(ISessionRepository):
     ) -> List[FacultyUtilization]:
         query = self.db.query(FacultyUtilization).options(
             joinedload(FacultyUtilization.batch).joinedload(Batch.entity),
-            joinedload(FacultyUtilization.batch).joinedload(Batch.coordinator)
+            joinedload(FacultyUtilization.batch).joinedload(Batch.coordinator),
+            joinedload(FacultyUtilization.faculty_type),
+            joinedload(FacultyUtilization.coordinator),
+            joinedload(FacultyUtilization.program_type),
         ).join(Batch, FacultyUtilization.batch_id == Batch.id)
         if batch_ids is not None:
             query = query.filter(FacultyUtilization.batch_id.in_(list(batch_ids)))

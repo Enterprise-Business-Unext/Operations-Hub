@@ -46,8 +46,6 @@ const batch = {
   training_days: 5,
   total_hours: 40,
   total_enrollments: 30,
-  residential_enrollments: 30,
-  non_residential_enrollments: 0,
   status: "Approval 1 Pending",
   is_schema_locked: false,
   created_at: "2027-01-01T00:00:00Z",
@@ -148,7 +146,6 @@ describe("BatchDetailDrawer shell", () => {
     await waitFor(() => {
       expect(updateBatch).toHaveBeenCalledTimes(1);
     });
-    expect(updateBatch.mock.calls[0][1]).not.toHaveProperty("non_residential_enrollments");
     expect(updateBatch.mock.calls[0][1]).toHaveProperty("total_enrollments", 30);
   });
 
@@ -165,8 +162,8 @@ describe("BatchDetailDrawer shell", () => {
       utilization_logged: false,
     };
     getScheduledSessions.mockResolvedValue([
-      { ...common, id: "schedule-1", sequence_number: 1, module: "Morning module" },
-      { ...common, id: "schedule-2", sequence_number: 2, module: "Afternoon module" },
+      { ...common, id: "schedule-1", module: "Morning module" },
+      { ...common, id: "schedule-2", module: "Afternoon module" },
     ]);
     renderDrawer("sessions");
 
@@ -184,7 +181,6 @@ describe("BatchDetailDrawer shell", () => {
       {
         id: "schedule-delete",
         batch_id: batch.id,
-        sequence_number: 1,
         session_date: "2027-01-04",
         day_name: "Monday",
         duration_hours: 4,

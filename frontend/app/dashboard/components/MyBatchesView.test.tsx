@@ -17,8 +17,6 @@ function makeBatch(overrides: Partial<Batch> = {}): Batch {
     training_days: 5,
     total_hours: 40,
     total_enrollments: 30,
-    residential_enrollments: 30,
-    non_residential_enrollments: 0,
     status: "Approval 1 Pending",
     is_schema_locked: false,
     created_at: "2027-01-01T00:00:00Z",

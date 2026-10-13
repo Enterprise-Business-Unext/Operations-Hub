@@ -28,7 +28,6 @@ def _seed_batch_with_sessions(db_session, batch, count=2):
     for i in range(count):
         ts = TrainingSession(
             batch_id=batch.id,
-            sequence_number=i + 1,
             session_date=date(2026, 1, 10 + i),
             day_name="Monday",
             module=f"Module {i + 1}",
@@ -252,7 +251,6 @@ def test_feedback_recalculates_on_rating_change(db_session):
     # Add a third planned session with a new rated delivery
     ts3 = TrainingSession(
         batch_id=batch.id,
-        sequence_number=3,
         session_date=date(2026, 1, 12),
         day_name="Wednesday",
         module="Module 3",

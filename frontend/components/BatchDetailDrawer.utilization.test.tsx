@@ -45,8 +45,6 @@ const batch = {
   training_days: 5,
   total_hours: 40,
   total_enrollments: 30,
-  residential_enrollments: 30,
-  non_residential_enrollments: 0,
   status: "Ongoing",
   faculty_assigned_text: "Kiran Menon",
   is_schema_locked: false,
@@ -57,7 +55,6 @@ const batch = {
 const scheduledSession = {
   id: "s-1",
   batch_id: "b-1",
-  sequence_number: 1,
   session_date: "2027-01-04",
   day_name: "Monday",
   start_time: "09:30:00",

@@ -105,7 +105,6 @@ class Batch(Base):
     # Financial Milestone Status
     finance_status = Column(String(50), default="Pending", nullable=False)  # Pending, Cleared
     finance_status_check_date = Column(Date, nullable=True)
-    finance_check = Column(Integer, nullable=True)
 
     # Quality Checkpoint Metrics (Gate 1 & Gate 2)
     batch_avg_feedback = Column(Numeric(3, 2), nullable=True)  # Average feedback score (1.0 - 5.0)

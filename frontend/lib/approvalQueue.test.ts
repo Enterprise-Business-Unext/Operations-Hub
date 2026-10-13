@@ -11,8 +11,6 @@ const baseBatch = {
   training_days: 2,
   total_hours: 16,
   total_enrollments: 20,
-  residential_enrollments: 0,
-  non_residential_enrollments: 20,
   status: 'Approval 1 Pending',
   is_schema_locked: false,
   created_at: '2026-10-01T00:00:00Z',

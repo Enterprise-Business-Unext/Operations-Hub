@@ -190,7 +190,6 @@ class BatchUpdateRequest(BaseModel):
     faculty_members: Optional[List[dict]] = None
     finance_status: Optional[str] = Field(None, pattern="^(Pending|Cleared)$")
     finance_status_check_date: Optional[date] = None
-    finance_check: Optional[int] = None
     remarks: Optional[str] = None
 
     @model_validator(mode="before")
@@ -262,7 +261,6 @@ class BatchResponse(BaseModel):
     faculty_members: List[dict] = Field(default_factory=list)
     finance_status: str = "Pending"
     finance_status_check_date: Optional[date] = None
-    finance_check: Optional[int] = None
     remarks: Optional[str] = None
     is_schema_locked: bool
     approver_1_id: Optional[UUID] = None

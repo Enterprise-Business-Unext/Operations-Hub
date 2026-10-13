@@ -421,12 +421,24 @@ class AuthService:
         return root_nodes
 
     def list_coordinators(self, current_user: User) -> List[UserResponse]:
-        if (current_user.role or "").lower() == "admin":
+        role = (current_user.role or "").lower()
+
+        if role == "admin":
             return [self._enrich_user(c) for c in self.user_repo.list_by_role("Coordinator")]
 
-        # All direct & indirect reports
-        sub_ids = self.user_repo.get_managed_coordinator_ids(current_user.id)
-        return [self._enrich_user(c) for c in self.user_repo.list_by_ids(sub_ids)]
+        if role == "manager":
+            # All direct & indirect reports
+            sub_ids = self.user_repo.get_managed_coordinator_ids(current_user.id)
+            return [self._enrich_user(c) for c in self.user_repo.list_by_ids(sub_ids)]
+
+        if role == "coordinator":
+            # Coordinators see all coordinators under their manager (including themselves)
+            if current_user.manager_id:
+                sub_ids = self.user_repo.get_managed_coordinator_ids(current_user.manager_id)
+                return [self._enrich_user(c) for c in self.user_repo.list_by_ids(sub_ids)]
+            return [self._enrich_user(current_user)]
+
+        return []
 
     def assign_coordinator(self, mapping_in: CoordinatorMappingCreate) -> UserManagerMapping:
         coordinator = self.user_repo.get_by_id(mapping_in.coordinator_id)

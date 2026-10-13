@@ -274,16 +274,23 @@ async def close_batch_gate2(
     Quality Gate 2 Checkpoint:
     Closes the batch once Quality Checkpoint 1 has written the batch average
     feedback. The NPS index is computed from the supplied promoter/passive/
-    detractor counts.
+    detractor counts. When NPS is not available, a reason must be provided.
     """
     closed_batch = service.close_gate2(id, closure_in, current_user.id, current_user)
 
     try:
-        await NotificationService.notify_gate_completion(
-            batch_id=closed_batch.batch_id,
-            gate_name="Gate 2 (Batch NPS Closure)",
-            score=f"NPS: {closed_batch.batch_nps:+.0f}"
-        )
+        if closed_batch.batch_nps is None:
+            await NotificationService.notify_gate_completion(
+                batch_id=closed_batch.batch_id,
+                gate_name="Gate 2 (Batch NPS Closure)",
+                score="NPS: Not Available"
+            )
+        else:
+            await NotificationService.notify_gate_completion(
+                batch_id=closed_batch.batch_id,
+                gate_name="Gate 2 (Batch NPS Closure)",
+                score=f"NPS: {closed_batch.batch_nps:+.0f}"
+            )
     except Exception:
         pass
 
@@ -323,7 +330,7 @@ def export_finance_csv(
         "Batch ID", "SOW Number", "Approval ID", "Client", "Program", "Category",
         "Technology", "Domain", "Delivery Mode", "Location", "Start Date", "End Date",
         "Total Enrollments", "Training Days", "Total Hours", "Finance Status",
-        "Finance Check Date", "Finance Check", "Batch Avg Feedback", "Batch NPS", "Status"
+        "Finance Check Date", "Batch Avg Feedback", "Batch NPS", "Status"
     ])
     
     for b in batches:
@@ -345,7 +352,6 @@ def export_finance_csv(
             b.total_hours or 0,
             b.finance_status or "Pending",
             b.finance_status_check_date.isoformat() if b.finance_status_check_date else "",
-            b.finance_check or "",
             float(b.batch_avg_feedback) if b.batch_avg_feedback else "",
             b.batch_nps or "",
             b.status

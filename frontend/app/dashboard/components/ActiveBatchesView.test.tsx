@@ -287,8 +287,8 @@ describe("ActiveBatchesView column visibility", () => {
     renderView({
       data: makeResponse({
         sessions: [
-          makeSession({ id: "s-1", sequence_number: 4, session_type: "scheduled" }),
-          makeSession({ id: "s-2", sequence_number: 2, session_type: "actual", module: "Advanced Python" }),
+          makeSession({ id: "s-1", session_type: "scheduled" }),
+          makeSession({ id: "s-2", session_type: "actual", module: "Advanced Python" }),
         ],
       }),
     });

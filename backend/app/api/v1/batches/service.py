@@ -417,7 +417,6 @@ class BatchService:
                 batch_id=batch.batch_id if batch else "",
                 batch_name=batch.program_name if batch else "",
                 session_type="scheduled",
-                sequence_number=ts.sequence_number,
                 module=ts.module,
                 trainer_name=ts.trainer_name,
                 faculty_name=None,
@@ -438,7 +437,6 @@ class BatchService:
                 batch_id=batch.batch_id if batch else "",
                 batch_name=batch.program_name if batch else "",
                 session_type="actual",
-                sequence_number=None,
                 module=fu.topic,
                 trainer_name=None,
                 faculty_name=fu.faculty_name,
@@ -572,7 +570,7 @@ class BatchService:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=detail,
                 )
-        finance_fields = {"finance_status", "finance_status_check_date", "finance_check"}
+        finance_fields = {"finance_status", "finance_status_check_date"}
         if finance_fields.intersection(update_data):
             team_name = current_user.team_detail.name if current_user.team_detail else ""
             if team_name.strip().lower() != "finance" and (current_user.role or "").lower() != "admin":
@@ -665,6 +663,10 @@ class BatchService:
             setattr(batch, field, value)
 
         batch.updated_at = datetime.now(timezone.utc)
+
+        if "training_days" in update_data or "end_date" in update_data:
+            scheduled_count = self.batch_repo.get_scheduled_session_counts([batch.id]).get(batch.id, 0)
+            batch.schedule_complete = (scheduled_count >= (batch.training_days or 0))
 
         if should_trigger_reapproval:
             # Increment reapproval count and set tracking fields
@@ -806,11 +808,11 @@ class BatchService:
         batch.updated_at = datetime.now(timezone.utc)
 
         # Keep session outcomes consistent with the batch-level cancellation.
+        # The cancellation reason is stored in batch.remarks only (not in faculty utilization).
         if target_status == "Cancelled":
             now = datetime.now(timezone.utc)
             for fs in self.batch_repo.list_non_terminal_faculty_sessions(batch.id):
                 fs.status = SessionStatus.Cancelled
-                fs.outcome_reason = reason.strip()
                 fs.outcome_at = now
                 fs.outcome_by = current_user.id
                 fs.updated_at = now

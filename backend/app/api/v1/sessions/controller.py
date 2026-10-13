@@ -12,7 +12,7 @@ from app.schemas.session import (
     TrainingSessionUpdate, TrainingSessionCreate,
     SessionCancelRequest, SessionRescheduleRequest,
 )
-from app.api.deps import get_current_user, require_coordinator_or_above
+from app.api.deps import get_current_user, require_coordinator_or_above, require_manager_or_admin
 from app.api.deps_services import get_session_service
 from app.api.v1.sessions.service import SessionService
 from app.api.v1.notifications.service import NotificationService
@@ -66,11 +66,15 @@ def list_sessions(
     batch_id: Optional[UUID] = None,
     faculty_name: Optional[str] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
+    all: bool = Query(False, description="Bypass RBAC scoping to view all utilization records (requires Manager or Admin)"),
     service: SessionService = Depends(get_session_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """Master session endpoint (Placeholder active for schema expansion)."""
-    return service.list(batch_id, faculty_name, status_filter, current_user.id)
+    if all:
+        # Only allow Manager or Admin to view all records
+        require_manager_or_admin(current_user)
+    return service.list(batch_id, faculty_name, status_filter, current_user.id, all)
 
 
 @router.post("", response_model=SessionDetailResponse, status_code=status.HTTP_201_CREATED)

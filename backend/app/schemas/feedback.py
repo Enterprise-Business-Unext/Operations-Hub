@@ -2,7 +2,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class SessionFeedbackCreate(BaseModel):
@@ -29,10 +29,21 @@ class SessionFeedbackResponse(BaseModel):
 class BatchNpsClosureCreate(BaseModel):
     """Payload required for Quality Gate 2.
 
-    Only the three NPS category counts are accepted. The index itself, the
-    total and the average batch feedback are derived server-side so a
-    client cannot assert its own NPS.
+    Only the three NPS category counts are accepted when NPS is available.
+    The index itself, the total and the average batch feedback are derived
+    server-side so a client cannot assert its own NPS.
+
+    When NPS is not available, `nps_available` must be false and
+    `nps_unavailable_reason` must be provided (min 3 characters).
     """
-    promoters_count: int = Field(..., ge=0, description="Responses scoring 9-10")
-    passive_count: int = Field(..., ge=0, description="Responses scoring 7-8")
-    detractors_count: int = Field(..., ge=0, description="Responses scoring 0-6")
+    promoters_count: int = Field(default=0, ge=0, description="Responses scoring 9-10")
+    passive_count: int = Field(default=0, ge=0, description="Responses scoring 7-8")
+    detractors_count: int = Field(default=0, ge=0, description="Responses scoring 0-6")
+    nps_available: bool = Field(default=True, description="Whether NPS responses are available")
+    nps_unavailable_reason: Optional[str] = Field(default=None, min_length=3, description="Reason why NPS is not available (required when nps_available=false)")
+
+    @model_validator(mode="after")
+    def validate_nps_available(self):
+        if not self.nps_available and not self.nps_unavailable_reason:
+            raise ValueError("nps_unavailable_reason is required when nps_available is false")
+        return self

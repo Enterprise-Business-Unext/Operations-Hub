@@ -282,7 +282,6 @@ def main():
                 faculty_assigned_text=fac_name,
                 finance_status=fin_status,
                 finance_status_check_date=fin_check_date,
-                finance_check=random.randint(50000, 500000) if status == "Completed" else None,
                 batch_avg_feedback=avg_fb,
                 batch_nps=batch_nps,
                 nps_total_responses=nps_total,
@@ -346,8 +345,6 @@ def main():
                 ts = TrainingSession(
                     id=uid(),
                     batch_id=batch.id,
-                    sequence_number=seq,
-                    week=f"Week {((seq - 1) // 5) + 1}",
                     session_date=sess_date,
                     day_name=sess_date.strftime("%A"),
                     start_time=time(9, 0),

@@ -28,8 +28,6 @@ const makeBatch = (overrides: Record<string, unknown> = {}) => ({
   training_days: 1,
   total_hours: 8,
   total_enrollments: 5,
-  residential_enrollments: 0,
-  non_residential_enrollments: 5,
   is_schema_locked: false,
   status: "Requested",
   created_at: "2026-01-01T00:00:00Z",

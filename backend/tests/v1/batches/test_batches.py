@@ -346,7 +346,6 @@ def test_list_reports_scheduled_session_count(client, db_session, ownership_acto
         db_session.add(
             TrainingSession(
                 batch_id=scheduled.id,
-                sequence_number=index + 1,
                 session_date=first_day + timedelta(days=index),
                 day_name="Day",
                 module=f"Module {index + 1}",
@@ -357,7 +356,6 @@ def test_list_reports_scheduled_session_count(client, db_session, ownership_acto
     db_session.add(
         TrainingSession(
             batch_id=scheduled.id,
-            sequence_number=4,
             session_date=first_day,
             day_name="Day",
             module="Second module on first day",
@@ -384,7 +382,6 @@ def test_cannot_reduce_training_days_below_scheduled_sessions(client, db_session
     db_session.add_all([
         TrainingSession(
             batch_id=batch.id,
-            sequence_number=1,
             session_date=first_day,
             module="Module one",
             duration_hours=Decimal("8.0"),
@@ -392,7 +389,6 @@ def test_cannot_reduce_training_days_below_scheduled_sessions(client, db_session
         ),
         TrainingSession(
             batch_id=batch.id,
-            sequence_number=2,
             session_date=first_day,
             module="Module two",
             duration_hours=Decimal("8.0"),
@@ -947,7 +943,6 @@ def _create_window_batch(db_session, role_ids):
 def _add_session(db_session, batch, day_offset, module, status="Scheduled"):
     session = TrainingSession(
         batch_id=batch.id,
-        sequence_number=1,
         session_date=WINDOW_START + timedelta(days=day_offset),
         module=module,
         duration_hours=Decimal("8.0"),

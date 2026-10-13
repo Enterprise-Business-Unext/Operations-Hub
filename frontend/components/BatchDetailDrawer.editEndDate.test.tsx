@@ -46,8 +46,6 @@ const batch = {
   training_days: 4,
   total_hours: 16,
   total_enrollments: 30,
-  residential_enrollments: 30,
-  non_residential_enrollments: 0,
   start_date: "2027-01-01T00:00:00Z",
   end_date: "2027-01-20T00:00:00Z",
   status: "Upcoming",
@@ -65,7 +63,6 @@ function scheduledSession(
   return {
     id,
     batch_id: batch.id,
-    sequence_number: 1,
     session_date: sessionDate,
     day_name: "Monday",
     duration_hours: 4,

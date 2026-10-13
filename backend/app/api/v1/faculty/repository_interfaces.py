@@ -32,6 +32,8 @@ class IFacultyRepository(ABC):
         faculty_type: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        user_id: Optional[str] = None,
+        all: bool = False,
     ) -> List[FacultyUtilization]:
         """Delivery ledger rows for the utilization CSV export, newest first.
 

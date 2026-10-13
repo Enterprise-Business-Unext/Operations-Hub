@@ -82,7 +82,6 @@ def init_db(db: Session = None, seed_base_data: bool = True) -> None:
                     "approver_2_approved_at": "TIMESTAMPTZ",
                     "finance_status": "VARCHAR(50) DEFAULT 'Pending' NOT NULL",
                     "finance_status_check_date": "DATE",
-                    "finance_check": "INTEGER",
                     "batch_avg_feedback": "NUMERIC(3, 2)",
                     "batch_nps": "NUMERIC(6, 2)",
                     "nps_total_responses": "INTEGER",
@@ -103,7 +102,6 @@ def init_db(db: Session = None, seed_base_data: bool = True) -> None:
                 # were wrongly listed here, so this table picked up four dead
                 # columns on every existing database.
                 "training_sessions": {
-                    "sequence_number": "INTEGER",
                 },
                 "faculty_utilization": {
                     "training_session_id": "UUID REFERENCES training_sessions(id) ON DELETE SET NULL",
@@ -119,6 +117,7 @@ def init_db(db: Session = None, seed_base_data: bool = True) -> None:
                     "vertical": "VARCHAR(50)",
                     "program_type_id": "UUID REFERENCES program_types(id) ON DELETE SET NULL",
                     "faculty_type_id": "UUID REFERENCES faculty_types(id) ON DELETE SET NULL",
+                    "coordinator_id": "UUID REFERENCES users(id) ON DELETE SET NULL",
                 },
             }
 
@@ -142,6 +141,7 @@ def init_db(db: Session = None, seed_base_data: bool = True) -> None:
                     ("ix_faculty_utilization_status", ["status"]),
                     ("ix_faculty_utilization_program_type_id", ["program_type_id"]),
                     ("ix_faculty_utilization_faculty_type_id", ["faculty_type_id"]),
+                    ("ix_faculty_utilization_coordinator_id", ["coordinator_id"]),
                 ],
             }
 

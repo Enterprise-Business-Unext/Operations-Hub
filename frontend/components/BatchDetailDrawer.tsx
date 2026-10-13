@@ -10,7 +10,7 @@ import {
 import { PaginationControls } from "@/components/PaginationControls";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, CreateSessionPayload,
-  api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType
+  api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType, User
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
 import { notifyError, notifySuccess } from "@/lib/notify";
@@ -237,7 +237,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     faculty_types: FacultyType[];
     program_types: ProgramType[];
     verticals: Vertical[];
-  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], program_types: [], verticals: [] });
+    coordinators: User[];
+  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], program_types: [], verticals: [], coordinators: [] });
 
   const requestText = usePrompt();
   const confirmAction = useConfirm();
@@ -275,8 +276,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         api.getFacultyTypes().catch(() => []),
         api.getProgramTypes().catch(() => []),
         api.getVerticals().catch(() => []),
-      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, program_types, verticals]) => {
-        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, program_types, verticals });
+        api.getCoordinators().catch(() => []),
+      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, program_types, verticals, coordinators]) => {
+        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, program_types, verticals, coordinators });
       });
     }
   }, [isOpen]);
@@ -420,6 +422,21 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const scheduledSessionCount = scheduledSessions.length;
 
+  // Helper to compute sequence number (1-based index from sorted scheduledSessions)
+  const getSequenceNumber = (session: ScheduledSession): number => {
+    const index = scheduledSessions.findIndex((s) => s.id === session.id);
+    return index >= 0 ? index + 1 : 0;
+  };
+
+  // Helper to compute week from batch.start_date
+  const computeWeek = (batchStartDate: string | undefined, sessionDate: string | undefined): string => {
+    if (!batchStartDate || !sessionDate) return "—";
+    const start = new Date(batchStartDate);
+    const session = new Date(sessionDate);
+    const diffDays = Math.floor((session.getTime() - start.getTime()) / (7 * 86400000));
+    return `Week ${diffDays + 1}`;
+  };
+
   // End-date reduction blockers. ISO `YYYY-MM-DD` strings compare
   // lexicographically, so the reduction is a plain string compare against the
   // stored batch window; only a strictly-earlier date counts as a reduction.
@@ -494,6 +511,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   // Program type is an FK (`program_type_id`), so the select binds the option id
   // — unlike Vertical, which stores the name because `Batch.vertical` is a String.
   const [utilProgramTypeId, setUtilProgramTypeId] = useState("");
+  const [utilCoordinatorId, setUtilCoordinatorId] = useState("");
   const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
   const [utilError, setUtilError] = useState<string | null>(null);
   const [utilConflicts, setUtilConflicts] = useState<string[]>([]);
@@ -559,6 +577,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setUtilVertical("");
     setUtilFacultyTypeId("");
     setUtilProgramTypeId("");
+    // Default coordinator to batch's coordinator if available
+    setUtilCoordinatorId(target?.coordinator?.id || "");
     setUtilError(null);
     setUtilConflicts([]);
     setShowDiscardPrompt(false);
@@ -666,6 +686,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         vertical: utilVertical,
         faculty_type_id: utilFacultyTypeId,
         program_type_id: utilProgramTypeId || undefined,
+        coordinator_id: utilCoordinatorId || undefined,
       };
       await api.createSession(payload);
       setIsLogUtilizationOpen(false);
@@ -722,6 +743,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [gate2Promoters, setGate2Promoters] = useState<number>(0);
   const [gate2Passives, setGate2Passives] = useState<number>(0);
   const [gate2Detractors, setGate2Detractors] = useState<number>(0);
+  const [gate2NpsAvailable, setGate2NpsAvailable] = useState<boolean>(true);
+  const [gate2NpsReason, setGate2NpsReason] = useState<string>("");
   const [isSubmittingGate2, setIsSubmittingGate2] = useState(false);
   const [gate2Error, setGate2Error] = useState<string | null>(null);
 
@@ -733,6 +756,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const gate2PassivePct = gate2ResponseTotal ? (gate2Passives / gate2ResponseTotal) * 100 : 0;
   const gate2DetractorPct = gate2ResponseTotal ? (gate2Detractors / gate2ResponseTotal) * 100 : 0;
   const gate2NpsPreview = gate2PromoterPct - gate2DetractorPct;
+
+  // Gate 2 NPS not available preview
+  const gate2NpsNotAvailablePreview = gate2NpsReason.trim().length >= 3 ? gate2NpsReason : "";
 
   // Timetable Ingestion Modal
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
@@ -1173,6 +1199,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         promoters_count: gate2Promoters,
         passive_count: gate2Passives,
         detractors_count: gate2Detractors,
+        nps_available: gate2NpsAvailable,
+        nps_unavailable_reason: gate2NpsAvailable ? undefined : gate2NpsReason.trim(),
       });
 
       setIsGate2ModalOpen(false);
@@ -1293,6 +1321,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           boxShadow: "0 24px 48px rgba(15, 23, 42, 0.2), 0 8px 16px rgba(0, 0, 0, 0.08)",
         }}
         aria-describedby={undefined}
+        onOpenAutoFocus={(e) => e.preventDefault()}
       >
         {/* Modal Header */}
         <DialogHeader className="flex-row items-center justify-between gap-4 space-y-0 border-b px-6 py-4" style={{
@@ -2777,6 +2806,42 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           {gate2Error && <ErrorBanner message={gate2Error} className="mb-3.5" />}
 
           <form onSubmit={handleCloseBatchGate2} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* NPS Availability Toggle */}
+            <div style={{ background: "#f8fafc", border: "1px solid var(--border-subtle)", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-main)" }}>NPS Responses Available</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.8rem", fontWeight: 500, color: gate2NpsAvailable ? "#0b5cab" : "var(--text-muted)" }}>
+                    <input
+                      type="radio"
+                      name="gate2-nps-available"
+                      checked={gate2NpsAvailable}
+                      onChange={() => setGate2NpsAvailable(true)}
+                      style={{ accentColor: "#0b5cab", width: 16, height: 16 }}
+                    />
+                    Yes
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: "0.8rem", fontWeight: 500, color: !gate2NpsAvailable ? "#b45309" : "var(--text-muted)" }}>
+                    <input
+                      type="radio"
+                      name="gate2-nps-available"
+                      checked={!gate2NpsAvailable}
+                      onChange={() => { setGate2NpsAvailable(false); setGate2NpsReason(""); }}
+                      style={{ accentColor: "#b45309", width: 16, height: 16 }}
+                    />
+                    Not Available
+                  </label>
+                </div>
+              </div>
+              <p style={{ fontSize: "0.7rem", color: "var(--text-dim)", margin: 0 }}>
+                {gate2NpsAvailable
+                  ? "Enter promoter, passive, and detractor counts to calculate the final NPS score."
+                  : "Provide a reason why NPS responses are not available (minimum 3 characters)."}
+              </p>
+            </div>
+
+            {/* NPS Available: Promoter/Passive/Detractor Inputs */}
+            {gate2NpsAvailable && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
                 <div>
                   <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
@@ -2835,9 +2900,35 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </p>
                 </div>
               </div>
+            )}
 
-              <div style={{ background: "#f8fafc", border: "1px solid var(--border-subtle)", borderRadius: 6, padding: "10px 12px", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                {gate2ResponseTotal === 0 ? (
+            {/* NPS Not Available: Reason Field */}
+            {!gate2NpsAvailable && (
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Reason for NPS Unavailable <span style={{ color: "#e11d48" }}>*</span>
+                </label>
+                <textarea
+                  value={gate2NpsReason}
+                  onChange={(e) => setGate2NpsReason(e.target.value)}
+                  placeholder="e.g. Survey not conducted, client declined, no responses received..."
+                  className="glass-input"
+                  style={{ width: "100%", minHeight: 80, resize: "vertical" }}
+                  required
+                  minLength={3}
+                />
+                <p style={{ fontSize: "0.7rem", color: gate2NpsReason.length > 0 && gate2NpsReason.length < 3 ? "#e11d48" : "var(--text-dim)", margin: "4px 0 0 0" }}>
+                  {gate2NpsReason.length > 0 && gate2NpsReason.length < 3
+                    ? "Reason must be at least 3 characters."
+                    : "Minimum 3 characters required."}
+                </p>
+              </div>
+            )}
+
+            {/* Preview Section */}
+            <div style={{ background: "#f8fafc", border: "1px solid var(--border-subtle)", borderRadius: 6, padding: "10px 12px", fontSize: "0.8rem", color: "var(--text-muted)" }}>
+              {gate2NpsAvailable ? (
+                gate2ResponseTotal === 0 ? (
                   <span style={{ color: "#b45309", fontWeight: 600 }}>
                     Enter at least one response to calculate the NPS.
                   </span>
@@ -2849,18 +2940,34 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     {"  ·  "}Detractors <strong style={{ color: "var(--text-main)" }}>{gate2DetractorPct.toFixed(1)}%</strong>
                     {"  ·  "}NPS = promoters% − detractors% = <strong style={{ color: gate2NpsPreview >= 0 ? "#16a34a" : "#b91c1c" }}>{gate2NpsPreview > 0 ? "+" : ""}{gate2NpsPreview.toFixed(2)}</strong>
                   </span>
-                )}
-              </div>
+                )
+              ) : (
+                <span style={{ color: "#b45309", fontWeight: 600 }}>
+                  {gate2NpsReason.trim().length >= 3
+                    ? `NPS: Not Available — ${gate2NpsReason.trim()}`
+                    : "NPS: Not Available (enter reason above)"}
+                </span>
+              )}
+            </div>
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
-                <button type="button" onClick={() => setIsGate2ModalOpen(false)} className="btn btn-secondary" style={{ padding: "8px 14px" }}>
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmittingGate2 || gate2ResponseTotal === 0} className="btn btn-primary" style={{ padding: "8px 14px", background: "#16a34a" }}>
-                  {isSubmittingGate2 ? "Closing Batch..." : "Formally Close Batch (NPS Closure)"}
-                </button>
-              </div>
-            </form>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
+              <button type="button" onClick={() => setIsGate2ModalOpen(false)} className="btn btn-secondary" style={{ padding: "8px 14px" }}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  isSubmittingGate2 ||
+                  (gate2NpsAvailable && gate2ResponseTotal === 0) ||
+                  (!gate2NpsAvailable && gate2NpsReason.trim().length < 3)
+                }
+                className="btn btn-primary"
+                style={{ padding: "8px 14px", background: "#16a34a" }}
+              >
+                {isSubmittingGate2 ? "Closing Batch..." : gate2NpsAvailable ? "Formally Close Batch (NPS Closure)" : "Formally Close Batch (NPS Not Available)"}
+              </button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -3613,7 +3720,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   Log Faculty Utilization
                 </DialogTitle>
                 <DialogDescription className="mt-0.5 text-xs">
-                  Day {selectedScheduleDay?.sequence_number} &bull; {formatDate(selectedScheduleDay?.session_date)}
+                  Day {selectedScheduleDay ? getSequenceNumber(selectedScheduleDay) : "—"} &bull; {formatDate(selectedScheduleDay?.session_date)}
+                  {selectedScheduleDay && activeBatch?.start_date ? ` • ${computeWeek(activeBatch.start_date, selectedScheduleDay.session_date)}` : ""}
                   {activeBatch?.batch_id ? ` • ${activeBatch.batch_id}` : ""}
                 </DialogDescription>
               </DialogHeader>
@@ -3799,7 +3907,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </span>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
                   <div>
                     <label htmlFor="util-faculty-type" style={UTIL_LABEL}>Faculty Type *</label>
                     <select
@@ -3868,6 +3976,29 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     {options.verticals.length === 0 && (
                       <span style={{ fontSize: "0.72rem", color: "#b91c1c", marginTop: 4, display: "block" }}>
                         No verticals configured. An admin must add one in Settings before utilization can be logged.
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="util-coordinator" style={UTIL_LABEL}>Coordinator</label>
+                    <select
+                      id="util-coordinator"
+                      value={utilCoordinatorId}
+                      onChange={(e) => { setUtilCoordinatorId(e.target.value); markUtilDirty(); }}
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                    >
+                      <option value="">Select Coordinator (Optional)</option>
+                      {options.coordinators.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.full_name}
+                        </option>
+                      ))}
+                    </select>
+                    {options.coordinators.length === 0 && (
+                      <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
+                        No coordinators available
                       </span>
                     )}
                   </div>

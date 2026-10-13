@@ -4,6 +4,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
+from pydantic import BaseModel, field_validator
 
 from app.models.batch import Batch
 from app.models.session import SessionStatus, TERMINAL_UTILIZATION_STATUSES
@@ -104,10 +105,10 @@ class GatekeeperService:
         """
         Quality Checkpoint 2:
         Closing a batch is BLOCKED until Quality Checkpoint 1 has written the batch
-        average feedback, and until the final NPS breakdown is supplied. The NPS
-        index is derived here from the three category counts; the client never
-        supplies it. Gate 2 is sequenced after Gate 1 but never reads or writes
-        ``batch_avg_feedback``.
+        average feedback, and until the final NPS breakdown is supplied (or NPS
+        is marked as not available). The NPS index is derived here from the three
+        category counts; the client never supplies it. Gate 2 is sequenced after
+        Gate 1 but never reads or writes ``batch_avg_feedback``.
         """
         batch = self.gate_repo.get_batch_by_id(batch_id)
         if not batch:
@@ -136,6 +137,38 @@ class GatekeeperService:
         if all_sessions and any(s.status not in TERMINAL_UTILIZATION_STATUSES for s in all_sessions):
             raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
 
+        # Handle NPS not available case
+        if not closure_data.nps_available:
+            # nps_unavailable_reason is already validated by schema
+            reason = closure_data.nps_unavailable_reason
+
+            # Set all NPS fields to NULL
+            batch.batch_nps = None
+            batch.nps_total_responses = None
+            batch.nps_promoters = None
+            batch.nps_passives = None
+            batch.nps_detractors = None
+
+            # Append reason to remarks
+            timestamp = datetime.now(timezone.utc).strftime("%d-%m-%Y %H:%M UTC")
+            remark_entry = f"[{timestamp} - NPS closure skipped: {reason}]"
+            if batch.remarks:
+                batch.remarks = f"{batch.remarks}\n{remark_entry}"
+            else:
+                batch.remarks = remark_entry
+
+            # Mark batch as completed and schema locked
+            batch.status = "Completed"
+            batch.is_schema_locked = True
+            batch.updated_at = datetime.now(timezone.utc)
+
+            # Delete edit history
+            self.gate_repo.delete_batch_edit_history(batch.id)
+            self.gate_repo.commit()
+            self.gate_repo.refresh(batch)
+            return batch
+
+        # NPS available - current logic
         promoters = closure_data.promoters_count
         passives = closure_data.passive_count
         detractors = closure_data.detractors_count

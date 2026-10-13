@@ -367,7 +367,7 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
                     {scheduledSessions.map((session, index) => (
                       <li key={session.id} className="rounded-md bg-muted/50 p-3 text-sm">
                         <p className="font-medium">
-                          Session {session.sequence_number || index + 1}: {session.module || "Module not specified"}
+                          Session {index + 1}: {session.module || "Module not specified"}
                         </p>
                         <p className="text-muted-foreground">
                           {formatDate(session.session_date)}

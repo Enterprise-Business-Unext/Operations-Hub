@@ -69,10 +69,14 @@ class FacultyService:
         faculty_type: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        user_id: Optional[str] = None,
+        all: bool = False,
     ) -> List:
         """Delivery ledger rows backing the utilization CSV export."""
         return self.faculty_repo.list_utilization_for_export(
             faculty_type=faculty_type,
             start_date=start_date,
             end_date=end_date,
+            user_id=user_id,
+            all=all,
         )

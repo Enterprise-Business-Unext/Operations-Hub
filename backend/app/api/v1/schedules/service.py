@@ -728,7 +728,6 @@ class ExcelIngestionService:
             s_date = item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
             sessions.append(TrainingSession(
                 batch_id=batch.id,
-                sequence_number=idx,
                 session_date=s_date,
                 day_name=s_date.strftime("%A") if hasattr(s_date, "strftime") else None,
                 start_time=item.start_time,
@@ -741,7 +740,6 @@ class ExcelIngestionService:
         for gen_idx, (generated_date, faculty_name) in enumerate(generated, start=len(prepared) + 1):
             sessions.append(TrainingSession(
                 batch_id=batch.id,
-                sequence_number=gen_idx,
                 session_date=generated_date,
                 day_name=generated_date.strftime("%A") if hasattr(generated_date, "strftime") else None,
                 start_time=time(9, 0),

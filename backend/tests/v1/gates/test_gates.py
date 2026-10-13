@@ -108,6 +108,92 @@ def test_gate2_batch_nps_closure(client, coord_token_headers, db_session):
     assert db_session.query(BatchEditHistory).filter_by(batch_id=batch.id).count() == 0
 
 
+def test_gate2_batch_nps_not_available_with_reason(client, coord_token_headers, db_session):
+    """Gate 2 allows closure without NPS when nps_available=false and a reason is provided."""
+    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    db_session.add(BatchEditHistory(
+        batch_id=batch.id,
+        edited_by=batch.coordinator_id,
+        changed_fields={"training_days": {"before": 4, "after": 5}},
+    ))
+    db_session.commit()
+
+    nps_payload = {
+        "nps_available": False,
+        "nps_unavailable_reason": "Client declined to participate in NPS survey",
+    }
+
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/close",
+        json=nps_payload,
+        headers=coord_token_headers
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "Completed"
+    assert data["is_schema_locked"] is True
+    # All NPS fields should be NULL
+    assert data["batch_nps"] is None
+    assert data["nps_total_responses"] is None
+    assert data["nps_promoters"] is None
+    assert data["nps_passives"] is None
+    assert data["nps_detractors"] is None
+    # Reason should be in remarks
+    assert "NPS closure skipped" in (data["remarks"] or "")
+    assert "Client declined" in (data["remarks"] or "")
+    # Gate 1 average feedback preserved
+    assert float(data["batch_avg_feedback"]) == 4.5
+    # Edit history cleared
+    assert db_session.query(BatchEditHistory).filter_by(batch_id=batch.id).count() == 0
+
+
+def test_gate2_batch_nps_not_available_missing_reason(client, coord_token_headers, db_session):
+    """Gate 2 rejects closure when nps_available=false but no reason provided (or reason < 3 chars)."""
+    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    db_session.commit()
+
+    nps_payload = {
+        "nps_available": False,
+        "nps_unavailable_reason": "",
+    }
+
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/close",
+        json=nps_payload,
+        headers=coord_token_headers
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    # Pydantic validation errors return a list of error objects
+    if isinstance(detail, list):
+        error_text = " ".join(str(d.get("msg", "")) for d in detail)
+    else:
+        error_text = str(detail)
+    # The validation correctly rejects empty strings (min_length=3)
+    assert "at least 3 characters" in error_text.lower() or "3 characters" in error_text.lower()
+
+
+def test_gate2_batch_nps_not_available_short_reason(client, coord_token_headers, db_session):
+    """Gate 2 rejects closure when nps_available=false and reason < 3 chars."""
+    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    db_session.commit()
+
+    nps_payload = {
+        "nps_available": False,
+        "nps_unavailable_reason": "No",
+    }
+
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/close",
+        json=nps_payload,
+        headers=coord_token_headers
+    )
+
+    assert response.status_code == 422
+
+
 def test_gate2_blocked_until_gate1_complete(client, coord_token_headers, db_session):
     """A batch with no average feedback has not cleared Checkpoint 1, so
     closure is rejected with 409."""

@@ -10,7 +10,7 @@ from app.schemas.user import (
     CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode,
     ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate, AuditLogResponse
 )
-from app.api.deps import get_current_user, require_admin, require_manager_or_admin
+from app.api.deps import get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 from app.api.deps_services import get_auth_service
 from app.api.v1.auth.service import AuthService
 
@@ -156,7 +156,7 @@ def delete_user(
     return service.delete_user(id)
 
 
-@router.get("/users/coordinators", response_model=List[UserResponse], dependencies=[Depends(require_manager_or_admin)])
+@router.get("/users/coordinators", response_model=List[UserResponse], dependencies=[Depends(require_coordinator_or_above)])
 def get_coordinators(
     service: AuthService = Depends(get_auth_service),
     current_user: User = Depends(get_current_user)

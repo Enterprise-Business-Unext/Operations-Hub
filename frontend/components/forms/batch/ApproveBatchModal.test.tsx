@@ -40,7 +40,6 @@ describe("ApproveBatchModal schedule", () => {
       {
         id: "session-id",
         batch_id: batch.id,
-        sequence_number: 1,
         session_date: "2026-10-12",
         day_name: "Monday",
         start_time: "09:00:00",

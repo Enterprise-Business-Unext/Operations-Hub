@@ -130,7 +130,6 @@ interface FinanceDraft {
   approval_id: string;
   finance_status: string;
   finance_status_check_date: string;
-  finance_check: number | null;
 }
 
 type FinanceDrafts = Record<string, FinanceDraft>;
@@ -233,7 +232,6 @@ const FINANCE_EXPORT_COLUMNS: readonly CsvColumn<Batch>[] = [
   { key: "total_hours", label: "Total Hours" },
   { key: "finance_status", label: "Finance Status" },
   { key: "finance_status_check_date", label: "Finance Check Date" },
-  { key: "finance_check", label: "Finance Check" },
   { key: "batch_avg_feedback", label: "Batch Avg Feedback" },
   { key: "batch_nps", label: "Batch NPS" },
   { key: "status", label: "Status" },
@@ -456,7 +454,6 @@ export default function DashboardPage() {
           approval_id: previous?.approval_id !== undefined ? previous.approval_id : (batch.approval_id || ""),
           finance_status: previous?.finance_status || batch.finance_status || "Pending",
           finance_status_check_date: previous?.finance_status_check_date || batch.finance_status_check_date || "",
-          finance_check: previous?.finance_check ?? batch.finance_check ?? null,
         };
       });
       return next;
@@ -465,7 +462,7 @@ export default function DashboardPage() {
 
   const updateFinanceDraft = (
     batchId: string,
-    field: "approval_id" | "finance_status" | "finance_status_check_date" | "finance_check",
+    field: "approval_id" | "finance_status" | "finance_status_check_date",
     value: string | number | null,
   ) => {
     setFinanceDrafts((prev) => ({
@@ -474,7 +471,6 @@ export default function DashboardPage() {
         approval_id: prev[batchId]?.approval_id ?? "",
         finance_status: prev[batchId]?.finance_status || "Pending",
         finance_status_check_date: prev[batchId]?.finance_status_check_date || "",
-        finance_check: prev[batchId]?.finance_check ?? null,
         [field]: value,
       },
     }));
@@ -490,7 +486,6 @@ export default function DashboardPage() {
         approval_id: draft.approval_id?.trim() || null,
         finance_status: draft.finance_status || "Pending",
         finance_status_check_date: draft.finance_status_check_date || null,
-        finance_check: draft.finance_check ?? null,
       });
       await fetchBatches(true);
       notifySuccess("Finance details saved");
@@ -508,8 +503,7 @@ export default function DashboardPage() {
       return (
         (draft.approval_id?.trim() || "") !== (b.approval_id || "") ||
         draft.finance_status !== (b.finance_status || "Pending") ||
-        draft.finance_status_check_date !== (b.finance_status_check_date || "") ||
-        (draft.finance_check ?? null) !== (b.finance_check ?? null)
+        draft.finance_status_check_date !== (b.finance_status_check_date || "")
       );
     });
     if (dirtyBatches.length === 0) return;
@@ -524,7 +518,6 @@ export default function DashboardPage() {
             approval_id: draft.approval_id?.trim() || null,
             finance_status: draft.finance_status || "Pending",
             finance_status_check_date: draft.finance_status_check_date || null,
-            finance_check: draft.finance_check ?? null,
           });
         })
       );
@@ -569,7 +562,10 @@ export default function DashboardPage() {
     setIsLoadingFaculty(true);
     setFacultyError(null);
     try {
-      const ledger = await api.getSessions();
+      const isManagerOrAdmin = user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin";
+      const isFinance = user?.team_name?.trim().toLowerCase() === "finance";
+      const shouldSeeAll = isManagerOrAdmin || isFinance;
+      const ledger = await api.getSessions({ all: shouldSeeAll });
       setFacultyUtilizationLedger(ledger ?? []);
     } catch (err: any) {
       console.error("Failed to load faculty utilization:", err);
@@ -831,8 +827,7 @@ export default function DashboardPage() {
       if (
         (draft.approval_id?.trim() || "") !== (b.approval_id || "") ||
         draft.finance_status !== (b.finance_status || "Pending") ||
-        draft.finance_status_check_date !== (b.finance_status_check_date || "") ||
-        (draft.finance_check ?? null) !== (b.finance_check ?? null)
+        draft.finance_status_check_date !== (b.finance_status_check_date || "")
       ) {
         dirty.add(b.id);
       }
@@ -1527,7 +1522,6 @@ export default function DashboardPage() {
                         approval_id: b.approval_id || "",
                         finance_status: b.finance_status || "Pending",
                         finance_status_check_date: b.finance_status_check_date || "",
-                        finance_check: b.finance_check ?? null,
                       };
                       const visible = financeColumnVisibility.isVisible;
                       const approvalIdFieldId = `finance-approval-id-${b.id}`;

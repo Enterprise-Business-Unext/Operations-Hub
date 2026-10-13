@@ -1,5 +1,5 @@
 from typing import List, Optional, Any
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 import csv
 from io import StringIO
@@ -39,14 +39,20 @@ def export_faculty_utilization_csv(
     faculty_type: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    all: bool = Query(False, description="Bypass RBAC scoping to view all utilization records (requires Manager or Admin)"),
     service: FacultyService = Depends(get_faculty_service),
     current_user: User = Depends(get_current_user)
 ) -> StreamingResponse:
     """Export faculty utilization ledger as CSV."""
+    if all:
+        # Only allow Manager or Admin to view all records
+        require_manager_or_admin(current_user)
     records = service.utilization_export_rows(
         faculty_type=faculty_type,
         start_date=start_date,
         end_date=end_date,
+        user_id=str(current_user.id),
+        all=all,
     )
     
     output = StringIO()

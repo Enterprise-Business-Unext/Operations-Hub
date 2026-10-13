@@ -16,8 +16,6 @@ SessionStatus = Literal["Scheduled", "InProgress", "Completed", "Cancelled", "No
 
 class TrainingSessionBase(BaseModel):
     batch_id: UUID
-    sequence_number: Optional[int] = None
-    week: Optional[str] = None
     session_date: date
     day_name: Optional[str] = None
     start_time: Optional[time] = None
@@ -51,8 +49,6 @@ class TrainingSessionCreate(TrainingSessionBase):
 
 
 class TrainingSessionUpdate(BaseModel):
-    sequence_number: Optional[int] = None
-    week: Optional[str] = None
     session_date: Optional[date] = None
     day_name: Optional[str] = None
     start_time: Optional[time] = None
@@ -99,6 +95,7 @@ class SessionBase(BaseModel):
     vertical: Optional[str] = None  # Delivery vertical, e.g. IT/ITES
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None  # Engagement type, from faculty_types
+    coordinator_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -147,6 +144,7 @@ class SessionUpdate(BaseModel):
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None
+    coordinator_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -175,6 +173,8 @@ class SessionResponse(SessionBase):
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None
     faculty_type_name: Optional[str] = None  # Resolved display name
+    coordinator_id: Optional[UUID] = None
+    coordinator_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
