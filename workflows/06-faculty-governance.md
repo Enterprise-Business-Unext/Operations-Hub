@@ -116,23 +116,30 @@ Date, Faculty Name, Faculty Type, Topic, Hours, City, Venue, Mode, Status, Feedb
 - `venue` (String, nullable)
 - `location_city` (String, nullable)
 - `mode_of_delivery` (String, default: 'Online')
-- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, NotConducted, Rescheduled)
+- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, "Not Conducted", Rescheduled)
 - `feedback_submitted` (Boolean, default: false)
 - `feedback_rating` (Numeric(3,2), nullable)
 - `feedback_notes` (Text, nullable)
+- `outcome_reason` (Text, nullable)
+- `outcome_at` (TIMESTAMPTZ, nullable)
+- `outcome_by` (FK to users.id, nullable)
 - `vertical` (String, nullable)
 - `program_type_id` (FK to program_types.id, SET NULL, indexed)
 - `faculty_type_id` (FK to faculty_types.id, SET NULL, indexed)
+- `coordinator_id` (FK to users.id, nullable, indexed)
 - `created_at` (TIMESTAMPTZ)
 - `updated_at` (TIMESTAMPTZ)
 
 ## Computed Properties (FacultyUtilization)
 
-- `faculty_type_name`: Resolved display name from `faculty_type` relationship
+- `faculty_type_name`: Resolved display name from the `faculty_type` relationship
+- `entity`: Resolved from `batch.entity.name`
+- `program`: Resolved from `batch.program_name`
 - `client`: Resolved from `batch.client_name`
 - `category`: Resolved from `batch.category`
 - `batch_code`: Resolved from `batch.batch_id`
-- `coordinator`: Resolved from `batch.coordinator.full_name`
+- `coordinator`: Property returning `batch.coordinator.full_name` (the `@property` overrides the `coordinator` relationship descriptor; resolves through the batch, not the `coordinator_id` FK directly)
+- `coordinator_name`: Alias for the `coordinator` property
 - `module_feedback`: Alias for `feedback_notes`
 
 ## Faculty Utilization Indexes

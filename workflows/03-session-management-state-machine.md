@@ -6,14 +6,15 @@
 | Field | Description |
 |-------|-------------|
 | `batch_id` | FK to Batch |
-| `sequence_number` | Auto-assigned order |
+| `sequence_number` | Computed at runtime (not a DB column) |
+| `week` | Computed at runtime from batch start_date (not a DB column) |
 | `session_date` | Date of training (DATE type) |
 | `day_name` | Day of week |
 | `start_time` / `end_time` | Time window |
 | `duration_hours` | Hours for this session |
 | `module` | Topic/module name |
 | `trainer_name` | Assigned faculty |
-| `status` | Scheduled, InProgress, Completed, Cancelled, Not Conducted, Rescheduled |
+| `status` | Scheduled, InProgress, Completed, Cancelled, "Not Conducted", Rescheduled |
 
 ### FacultyUtilization (Delivery Ledger)
 | Field | Description |
@@ -35,6 +36,7 @@
 | `outcome_at` / `outcome_by` | Outcome tracking |
 | `vertical` | Delivery vertical |
 | `program_type_id` / `faculty_type_id` | Lookup FKs |
+| `coordinator_id` | FK to users.id (nullable) |
 
 ## States
 
@@ -49,7 +51,7 @@
 ### TrainingSession
 - `Scheduled` → `Completed` (when linked utilization is completed through Gate 1)
 - `Scheduled`/`InProgress` → `Cancelled` / `Not Conducted` (batch cancellation cascade)
-- `Scheduled` → `Rescheduled` (date/time change)
+- Status changes are NOT permitted via `update_scheduled` — the endpoint blocks any status change and returns 409.
 
 ### FacultyUtilization
 - `Scheduled` → `InProgress`
@@ -69,9 +71,9 @@
 
 **Flow:**
 1. Validate batch exists
-2. Auto-assign `sequence_number` if not provided (last_sequence + 1)
-3. If `day_name` not provided, infer from `session_date`
-4. Create `TrainingSession` with `status="Scheduled"`
+2. If `day_name` not provided, infer from `session_date`
+3. Create `TrainingSession` with `status="Scheduled"`
+4. `sequence_number` and `week` are NOT stored — they are computed at read time in `SessionService.list_scheduled()`
 
 ## Create Utilization (Actual Delivery)
 
@@ -182,8 +184,6 @@ Session outcomes do not automatically complete a batch. Once all scheduled and l
 
 - `id` (UUID, PK)
 - `batch_id` (FK to batches.id, CASCADE delete)
-- `sequence_number` (Integer, nullable)
-- `week` (String, nullable)
 - `session_date` (DATE, not nullable, indexed)
 - `day_name` (String, nullable)
 - `start_time` (TIME, nullable)
@@ -191,11 +191,16 @@ Session outcomes do not automatically complete a batch. Once all scheduled and l
 - `duration_hours` (Numeric(5,2), default: 8.00)
 - `module` (Text, not nullable)
 - `trainer_name` (String, nullable, indexed)
-- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, NotConducted, Rescheduled)
+- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, "Not Conducted", Rescheduled)
 - `created_at` (TIMESTAMPTZ)
 - `updated_at` (TIMESTAMPTZ)
 
-Unique Constraint: `(batch_id, session_date, module)`
+**Unique Constraint:** `(batch_id, session_date, module)`
+
+**Computed Properties (not persisted columns):**
+- `sequence_number`: Sequential order, computed at runtime in `SessionService.list_scheduled()` as `enumerate(start=1)` ordered by `session_date, module`
+- `week`: Week label string (e.g. "Week 1"), computed at runtime from `batch.start_date` as `(delta_days // 7) + 1`
+- `effective_status`: Returns Completed/Upcoming/Ongoing/Overdue based on date
 
 ## FacultyUtilization Model Fields (from SQLAlchemy)
 
@@ -211,17 +216,25 @@ Unique Constraint: `(batch_id, session_date, module)`
 - `venue` (String, nullable)
 - `location_city` (String, nullable)
 - `mode_of_delivery` (String, default: 'Online')
-- `status` (Enum: same as TrainingSession)
+- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, "Not Conducted", Rescheduled)
 - `feedback_submitted` (Boolean, default: false)
 - `feedback_rating` (Numeric(3,2), nullable)
 - `feedback_notes` (Text, nullable)
+- `outcome_reason` (Text, nullable)
+- `outcome_at` (TIMESTAMPTZ, nullable)
+- `outcome_by` (FK to users.id, nullable)
 - `vertical` (String, nullable)
-- `program_type_id` (FK to program_types.id, SET NULL)
-- `faculty_type_id` (FK to faculty_types.id, SET NULL)
+- `program_type_id` (FK to program_types.id, SET NULL, indexed)
+- `faculty_type_id` (FK to faculty_types.id, SET NULL, indexed)
+- `coordinator_id` (FK to users.id, nullable, indexed)
 - `created_at` (TIMESTAMPTZ)
 - `updated_at` (TIMESTAMPTZ)
 
 Computed properties (not stored):
-- `faculty_type_name` - resolved from faculty_type relationship
-- `client`, `category`, `batch_code`, `coordinator` - resolved from batch relationship
-- `module_feedback` - alias for feedback_notes
+- `faculty_type_name` - resolved from the `faculty_type` relationship
+- `entity` - resolved from `batch.entity.name`
+- `program` - resolved from `batch.program_name`
+- `client`, `category`, `batch_code` - resolved from batch relationship
+- `coordinator` - property returning `batch.coordinator.full_name` (the `@property` overrides the `coordinator` relationship descriptor; resolves through the batch, not the `coordinator_id` FK directly)
+- `coordinator_name` - alias for the `coordinator` property
+- `module_feedback` - alias for `feedback_notes`

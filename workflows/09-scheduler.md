@@ -106,10 +106,12 @@ This runs nightly to catch any batches that had rated deliveries but weren't upd
 
 ## Timezone Handling
 
-- All timestamps stored as `TIMESTAMPTZ` in UTC
-- Scheduler runs in IST (Asia/Kolkata)
-- Date comparisons use `datetime.now(IST).date()` for "today"
-- Batch `start_date` and `end_date` are compared as dates (time component ignored for status transitions)
+- All timestamps stored as `TIMESTAMPMZ` in UTC
+- Scheduler trigger runs in IST (`Asia/Kolkata`), firing at 00:30 IST which is 19:00 UTC of the previous day
+- Date comparisons in `sync_statuses` use `datetime.now(timezone.utc).date()` for "today"
+- Batch `start_date` and `end_date` are compared as dates (time component included in the comparison via `end_of_day`/`start_of_day` in repository queries)
+
+> Note: The scheduler fires at 00:30 IST (19:00 UTC previous day), but date comparisons use UTC. This means batches with `start_date` on the IST "today" will not transition to Ongoing until the UTC date catches up, which is the day after at 00:30 IST.
 
 ## Development vs Production
 

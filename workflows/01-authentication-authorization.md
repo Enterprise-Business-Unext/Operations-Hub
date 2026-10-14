@@ -29,11 +29,14 @@ The backend implements JWT-based authentication with role-based access control (
    - Generate refresh token (expires in 7 days by default)
    - Log audit event: `LOGIN_SUCCESS`
 
-**Audit Events Logged:**
-- `LOGIN_FAILED` - on invalid password or inactive account
-- `ACCOUNT_LOCKED` - when max failed attempts reached
-- `ACCOUNT_UNLOCKED` - when locked account logs in successfully
-- `LOGIN_SUCCESS` - on successful login
+**Audit Events Logged (AuditEventType enum values):**
+- `login_failed` - on invalid password or inactive account
+- `account_locked` - when max failed attempts reached
+- `account_unlocked` - when locked account logs in successfully
+- `login_success` - on successful login
+
+Additional audit events exist but are not auth-specific:
+- `password_change`, `password_reset_admin`, `logout`, `user_created`, `user_updated`, `user_deleted`, `role_assigned`, `refresh_token_used`, `refresh_token_failed`
 
 ## Token Refresh Workflow
 
@@ -104,17 +107,64 @@ Manager       - View/edit batches in their scope, view analytics
 Coordinator   - Create/edit batches they own, log sessions
 Sales         - Limited batch ownership (sales_spoc)
 Faculty       - View assigned sessions, receive notifications
-Finance       - Special team: can update finance fields, sees all batches
 ```
+
+> Note: "Finance" is a **team** (not a role). Users on the Finance team can have any role, but Finance team membership grants elevated access to batch finance fields (`finance_status`, `finance_status_check_date`) regardless of role.
 
 ## Permission Dependencies
 
 | Dependency | Allowed Roles |
 |------------|---------------|
+| `get_current_user` | Any authenticated user (JWT validated) |
+| `require_roles(allowed_roles)` | Factory that returns a dependency checking `current_user.role` against the allowed list (case-insensitive); raises 403 otherwise |
 | `require_admin` | Admin only |
 | `require_manager_or_admin` | Admin, Manager |
 | `require_coordinator_or_above` | Admin, Manager, Coordinator |
-| `get_current_user` | Any authenticated user |
+
+### Service-layer RBAC Helpers (from backend/app/api/deps.py)
+
+- `get_all_subordinate_ids(manager_id, db)` — Returns all direct and indirect subordinate UUIDs via BFS over `User.manager_id` and `UserManagerMapping` table
+- `get_managed_coordinator_ids(manager_id, db)` — Returns only coordinators under a manager (excludes other managers)
+- `get_manager_scope_user_ids(user, db)` — Returns the operational ownership scope for a user
+- `is_manager_or_lead(user, db)` — Returns `True` if user role is Admin/Manager, or if user `has_direct_reports`
+
+### Token Claims
+
+- `sub`: User UUID (string)
+- `role`: User's system role (e.g., "Admin", "Manager", "Coordinator", "Sales", "Faculty")
+- `type`: "access" or "refresh" — used to distinguish token types during validation
+- `exp`: Expiration timestamp (30 min for access, 7 days for refresh)
+
+### Rate Limiting
+
+- Applied only to auth endpoints (`/api/v1/auth/*`) via `RedisRateLimitMiddleware`
+- `RATE_LIMIT_REQUESTS`: 100 requests per window
+- `RATE_LIMIT_WINDOW_SECONDS`: 60 seconds
+- `RATE_LIMIT_ENABLED`: `True` by default
+- Returns 429 with `Retry-After` header when exceeded
+
+## Login Endpoint RBAC Matrix (Auth Controller)
+
+| Endpoint | Auth | Notes |
+|----------|------|-------|
+| `POST /auth/login` | None | Email/password required |
+| `POST /auth/refresh` | None | Valid refresh token |
+| `GET /auth/me` | Any authenticated | - |
+| `POST /auth/change-password` | Any authenticated | Current password correct |
+| `GET /auth/my-reports` | Any authenticated | Direct reports of caller |
+| `GET /auth/users` | Manager or Admin | - |
+| `POST /auth/users` | Admin | - |
+| `PATCH /auth/users/{id}` | Admin | - |
+| `DELETE /auth/users/{id}` | Admin | Cannot delete self |
+| `POST /auth/users/admin-create` | Admin | Auto-generates password, optional welcome email |
+| `POST /auth/users/{id}/change-password` | Admin | Admin resets user password |
+| `GET /auth/users/assignable` | Any authenticated | Query: `role` (Sales/Coordinator/Manager), optional `team_name` |
+| `GET /auth/hierarchy` | Any authenticated | Full org tree |
+| `GET /auth/users/coordinators` | Coordinator or above | Scoped to caller's managed coordinators |
+| `POST /auth/users/coordinator-mapping` | Admin | - |
+| `GET /auth/coordinator-mappings` | Admin | - |
+| `DELETE /auth/coordinator-mappings/{mapping_id}` | Admin | - |
+| `GET /auth/audit-logs` | Admin | Pagination: `skip`, `limit` (max 500) |
 
 ## Manager Scope Resolution
 

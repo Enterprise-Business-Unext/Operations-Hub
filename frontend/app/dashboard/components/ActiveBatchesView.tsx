@@ -15,7 +15,6 @@ import {
   TableFilters,
   TableStateRow,
 } from "@/components/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   CountBadge,
@@ -193,12 +192,6 @@ const SESSION_COLUMN_DEFS = [
     filterable: true,
   },
   {
-    key: "type",
-    label: "Type",
-    accessor: (session: ActiveSessionItem) => session.session_type || "",
-    filterable: true,
-  },
-  {
     key: "module",
     label: "Module",
     accessor: (session: ActiveSessionItem) => session.module || "",
@@ -249,7 +242,6 @@ const SESSION_COLUMN_KEYS: readonly { key: SessionColumnKey; label: string }[] =
 const SESSION_EXPORT_COLUMNS: readonly CsvColumn<ActiveSessionItem>[] = [
   { key: "batch_id", label: "Batch ID" },
   { key: "batch_name", label: "Batch Name" },
-  { key: "session_type", label: "Type" },
   { key: "module", label: "Module" },
   { key: "faculty_name", label: "Faculty" },
   { key: "trainer_name", label: "Trainer" },
@@ -482,13 +474,6 @@ function SessionRow({
         <td style={CELL_STYLE}>
           <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{session.batch_id || "—"}</div>
           <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>{session.batch_name || "—"}</div>
-        </td>
-      )}
-      {columns.isVisible("type") && (
-        <td style={CELL_STYLE}>
-          <Badge variant={isActual ? "info" : "default"} size="sm" className="normal-case tracking-normal">
-            {isActual ? "Actual" : "Scheduled"}
-          </Badge>
         </td>
       )}
       {columns.isVisible("module") && (
@@ -892,14 +877,6 @@ export function ActiveBatchesView({
                 value: sessionsFilters.getFilter("status"),
                 onChange: (value) => sessionsFilters.setFilter("status", value),
                 options: sessionsFilters.optionsFor("status"),
-              },
-              {
-                key: "type",
-                label: "Type",
-                value: sessionsFilters.getFilter("type"),
-                onChange: (value) => sessionsFilters.setFilter("type", value),
-                options: sessionsFilters.optionsFor("type"),
-                width: 140,
               },
               {
                 key: "delivery",

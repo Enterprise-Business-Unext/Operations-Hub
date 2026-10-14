@@ -81,6 +81,8 @@ in `training_sessions` counts as one session, including multiple modules on the
 same date. Applying a schedule or editing the batch is rejected if the resulting
 session count would exceed `training_days`.
 
+> **Faculty overlap is NOT checked.** The README explicitly states: "Faculty double-booking across batches is not checked." The `overlap` category in `_aggregate_errors` is a label only; no double-booking validation is performed during ingestion or delivery logging.
+
 | Rule | Condition | Error |
 |------|-----------|-------|
 | Batch match | `item.batch_id` matches target batch or is null | "Row belongs to a different batch" |
@@ -89,7 +91,8 @@ session count would exceed `training_days`.
 | Faculty required | `faculty_name` or `batch.faculty_assigned_text` present | "Faculty name is required" |
 | Duplicate row | Same `(date, start_time, end_time, topic)` in same upload | "Duplicate schedule row in upload" |
 | Existing session | Same `(batch_id, session_date, module)` already in DB | "Matching session already exists for this batch" |
-| Overlap | Same faculty, same date, overlapping times in same upload | "Overlaps another uploaded session from row X" |
+
+> **Note:** The "Overlap" row previously documented here is NOT implemented. No faculty double-booking or time-overlap check exists in the ingestion pipeline.
 
 ## Missing Session Auto-Generation
 
@@ -103,9 +106,10 @@ If `batch.training_days > number of scheduled sessions`:
 ## Persistence Rules
 
 - All sessions created in a single transaction
-- `sequence_number` auto-assigned in order
 - `day_name` derived from `session_date`
 - `status="Scheduled"` for all new sessions
+- `batch.schedule_complete` is updated to `(total_scheduled >= batch.training_days)`
+- `sequence_number` and `week` are NOT stored — they are computed at read time in `SessionService.list_scheduled()`
 - Unique constraint on `(batch_id, session_date, module)` prevents duplicates
 
 ## Effective Status
@@ -120,8 +124,6 @@ If `batch.training_days > number of scheduled sessions`:
 
 - `id` (UUID, PK)
 - `batch_id` (FK to batches.id, CASCADE delete)
-- `sequence_number` (Integer, nullable)
-- `week` (String, nullable)
 - `session_date` (DATE, not nullable, indexed)
 - `day_name` (String, nullable)
 - `start_time` (TIME, nullable)
@@ -129,9 +131,11 @@ If `batch.training_days > number of scheduled sessions`:
 - `duration_hours` (Numeric(5,2), default: 8.00)
 - `module` (Text, not nullable)
 - `trainer_name` (String, nullable, indexed)
-- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, NotConducted, Rescheduled)
+- `status` (Enum: Scheduled, InProgress, Completed, Cancelled, "Not Conducted", Rescheduled)
 - `created_at` (TIMESTAMPTZ)
 - `updated_at` (TIMESTAMPTZ)
+
+> **Note:** `sequence_number` (Integer) and `week` (String) are NOT database columns. They are computed at runtime by `SessionService.list_scheduled()` — `sequence_number` is an `enumerate(start=1)` index, and `week` is derived from the batch's `start_date`.
 
 Unique Constraint: `(batch_id, session_date, module)`
 
@@ -146,18 +150,12 @@ Unique Constraint: `(batch_id, session_date, module)`
 - Accepts HH:MM, H:MM, HH:MM:SS formats
 - Stored as TIME type
 
-### Faculty Resolution
-During apply, faculty names are resolved:
-1. Exact match on User.full_name with role="Faculty"
-2. ILIKE match on User.full_name with role="Faculty"
-3. Exact match on any active User.full_name
-4. ILIKE match on any active User.full_name
-5. Falls back to free-text name if no match
-
 ### Conflict Detection
-- Checks for faculty double-booking on same date with overlapping times
-- Checks against existing TrainingSession records in database
-- Checks within the same upload for duplicates
+> Faculty overlap/double-booking is NOT checked during ingestion. See Per-Row Validation above.
+- Checks against existing `TrainingSession` records in database (same `batch_id, session_date, module`)
+- Checks within the same upload for duplicate `(date, start_time, end_time, topic)` rows
+
+> Faculty names provided in the schedule upload are stored as free-text on `TrainingSession.trainer_name`. Full name-to-user resolution (exact/ILIKE match on `User.full_name` with `role="Faculty"`, then any active user, then free-text fallback) only occurs when **logging a delivery** via `POST /api/v1/sessions`, not during schedule ingestion.
 
 ## Error Handling
 

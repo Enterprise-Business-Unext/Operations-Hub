@@ -299,7 +299,6 @@ describe("ActiveBatchesView column visibility", () => {
 
     const [, sessionFiltersButton] = screen.getAllByRole("button", { name: /^Filters/ });
     await user.click(sessionFiltersButton);
-    expect(screen.getByLabelText("Type")).toBeTruthy();
 
     await user.click(sessionFullscreenButton);
     // The expanded overlay is portalled out of the panel's own position, so it
@@ -313,39 +312,15 @@ describe("ActiveBatchesView column visibility", () => {
     expect((fullscreenPanel as HTMLElement).style.zIndex).toBe("1000");
     expect(document.body.style.overflow).toBe("hidden");
 
-    expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
-    expect(screen.getByLabelText("Type")).toBeTruthy();
-
-    const [, sessionSort] = screen.getAllByLabelText("Sort by") as unknown as HTMLSelectElement[];
-    await user.selectOptions(sessionSort, "sequence");
-    const sessionTable = fullscreenPanel?.querySelector("table");
-    const sequenceColumn = Array.from(sessionTable?.querySelectorAll("thead th") ?? []).findIndex(
-      (header) => header.textContent === "Sequence"
-    );
-    const sequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
-      (row) => row.children[sequenceColumn]?.textContent?.trim()
-    );
-    expect(sequenceValues).toEqual(["4", "2"]);
-    await user.click(screen.getByRole("button", { name: "Sort ascending" }));
-    const ascendingSequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
-      (row) => row.children[sequenceColumn]?.textContent?.trim()
-    );
-    expect(ascendingSequenceValues).toEqual(["2", "4"]);
-
-    await user.selectOptions(screen.getByLabelText("Type"), "scheduled");
-    expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
-    expect(screen.queryByRole("cell", { name: "2" })).toBeNull();
-
+    // Column visibility toggle works in fullscreen
     const [, sessionColumnsButton] = screen.getAllByRole("button", { name: /Columns/ });
     await user.click(sessionColumnsButton);
-    await user.click(screen.getByRole("checkbox", { name: "Sequence" }));
+    await user.click(screen.getByRole("checkbox", { name: "Module" }));
 
-    expect(screen.queryByRole("columnheader", { name: "Sequence" })).toBeNull();
-    expect(screen.queryByRole("cell", { name: "4" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Module" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /Show all columns/ }));
-    expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
-    expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Module" })).toBeTruthy();
 
     // Escape is the way out of the CSS overlay the same way it is out of
     // native fullscreen, so the sessions table has to answer it too.

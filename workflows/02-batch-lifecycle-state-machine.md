@@ -7,36 +7,39 @@
 | `Requested` | Initial draft before submission |
 | `Approval 1 Pending` | Awaiting first approver decision |
 | `Approval 2 Pending` | Awaiting second approver decision |
-| `Approved` | Both approval levels completed |
-| `Upcoming` | Approved, start date in the future |
-| `Ongoing` | Approved, start date has arrived |
+| `Upcoming` | Both approvers approved, start date in the future |
+| `Ongoing` | Both approvers approved, start date has arrived |
 | `Pending for Closure` | End date passed, awaiting Gate 2 |
 | `Completed` | Gate 2 closed, batch finished |
 | `OnHold` | Temporarily paused |
 | `Cancelled` | Terminal state, no further transitions |
 | `Rejected` | Rejected during approval process |
 
+> **Note:** `Approved` is NOT a BatchStatus value. When both approvers approve, the batch auto-transitions to `Upcoming` (future start) or `Ongoing` (start date arrived). `Approved` exists only as an `ApprovalStatus` value on `approver_1_status` / `approver_2_status`.
+
 ## Valid Transitions Matrix
 
 ```
-Requested           → Approval 1 Pending, OnHold, Cancelled
-Approval 1 Pending  → Approval 2 Pending, Requested, OnHold, Cancelled
-Approval 2 Pending  → Approved, Upcoming, Ongoing, Requested, OnHold, Cancelled
-Approved            → Upcoming, Ongoing, OnHold, Cancelled
-Upcoming            → Ongoing, OnHold, Cancelled, Approved
-Ongoing             → Pending for Closure, OnHold, Cancelled
-Pending for Closure → Completed, OnHold, Cancelled
-Completed           → OnHold (reopen for corrections)
-OnHold              → Requested, Approval 1 Pending, Approval 2 Pending, Approved, Upcoming, Ongoing, Cancelled
-Cancelled           → {} (terminal)
-Rejected            → Requested, OnHold, Cancelled
+Requested            → Approval 1 Pending, OnHold, Cancelled
+Approval 1 Pending   → Approval 2 Pending, Rejected, OnHold, Cancelled
+Approval 2 Pending   → Upcoming, Ongoing, Rejected, OnHold, Cancelled
+Upcoming             → Ongoing, OnHold, Cancelled
+Ongoing              → Pending for Closure, OnHold, Cancelled
+Pending for Closure  → Completed, OnHold, Cancelled
+Completed            → OnHold
+OnHold               → Requested, Approval 1 Pending, Approval 2 Pending, Upcoming, Ongoing, Cancelled
+Cancelled            → {} (terminal)
+Rejected             → Approval 1 Pending
 ```
+
+Source: `VALID_TRANSITIONS` dict in `backend/app/api/v1/batches/service.py` (lines 713-724).
 
 ## Approval Required Statuses
 
-`{Approved, Upcoming, Ongoing, Pending for Closure, Completed}`
+`{Upcoming, Ongoing, Pending for Closure, Completed}`
 
 These statuses cannot be entered unless both approver levels have approved.
+Source: `APPROVAL_REQUIRED_STATUSES` in `backend/app/api/v1/batches/service.py` (line 727).
 
 ## Batch Model Fields (from SQLAlchemy)
 
@@ -62,7 +65,7 @@ The `batches` table includes:
 - `calendar_days` (Integer, nullable, default: 0)
 - `total_hours` (Numeric(8,2), default: 0.00)
 - `total_enrollments` (Integer, default: 0)
-- `status` (Enum: Requested, Approval1Pending, Approval2Pending, Upcoming, Ongoing, PendingForClosure, Completed, OnHold, Cancelled, Rejected)
+- `status` (Enum: Requested, Approval 1 Pending, Approval 2 Pending, Upcoming, Ongoing, Pending for Closure, Completed, OnHold, Cancelled, Rejected)
 - `is_schema_locked` (Boolean, default: false)
 - `schedule_complete` (Boolean, default: false)
 - `approver_1_id` (FK to users.id)
@@ -71,14 +74,17 @@ The `batches` table includes:
 - `approver_2_status` (Enum: Pending, Approved, Rejected)
 - `approver_1_approved_at` (TIMESTAMPTZ)
 - `approver_2_approved_at` (TIMESTAMPTZ)
+- `reapproval_count` (Integer, default: 0)
+- `last_reapproval_at` (TIMESTAMPTZ, nullable)
+- `last_reapproval_by` (FK to users.id, nullable)
+- `reapproval_changes` (JSON, nullable — before/after field values)
 - `primary_manager_id` (FK to users.id)
 - `coordinator_id` (FK to users.id)
 - `sales_spoc_id` (FK to users.id)
 - `faculty_members` (JSON)
 - `faculty_assigned_text` (String, legacy)
-- `finance_status` (String, default: 'Pending')
-- `finance_status_check_date` (Date)
-- `finance_check` (Integer)
+- `finance_status` (String, default: 'Pending' — values: Pending, Cleared)
+- `finance_status_check_date` (Date, nullable)
 - `batch_avg_feedback` (Numeric(3,2))
 - `batch_nps` (Numeric(6,2))
 - `nps_total_responses` (Integer)
@@ -140,7 +146,7 @@ The `batches` table includes:
 
 **Flow:**
 - `approve`: Set `approver_1_status="Approved"`, `approver_1_approved_at=now`, transition to `Approval 2 Pending`
-- `reject`: Set `approver_1_status="Rejected"`, transition to `Requested`, record reason in remarks
+- `reject`: Set `approver_1_status="Rejected"`, transition to `Rejected`, record reason in `remarks` as `Approval 1 rejected: {reason}`
 
 ## Level 2 Approval Workflow
 
@@ -153,7 +159,7 @@ The `batches` table includes:
 
 **Flow:**
 - `approve`: Set `approver_2_status="Approved"`, `approver_2_approved_at=now`, `is_schema_locked=True`, set `approval_id` from reason (if <= 100 chars), auto-transition to `Upcoming` or `Ongoing` based on `start_date`
-- `reject`: Set `approver_2_status="Rejected"`, transition to `Requested`
+- `reject`: Set `approver_2_status="Rejected"`, transition to `Rejected`, record reason in `remarks`
 
 ## Manager Direct Approval Workflow
 
@@ -197,8 +203,8 @@ The `batches` table includes:
 - Determines target status based on approval state:
   - `approver_1_status == "Pending"` → `Approval 1 Pending`
   - `approver_1 == "Approved"` and `approver_2 == "Pending"` → `Approval 2 Pending`
-  - Any rejected → `Requested`
-  - Both approved → `Approved`
+  - Any rejected → `Rejected`
+  - Both approved → `Upcoming`
 
 ## Close Batch (Gate 2) Workflow
 
@@ -208,11 +214,21 @@ The `batches` table includes:
 - `batch_avg_feedback` is not None (at least one rated delivery exists)
 - ALL sessions (scheduled + logged) are terminal (`Completed`, `Cancelled`, or `Not Conducted`)
 
+**Payload:** `BatchNpsClosureCreate` (see `backend/app/schemas/feedback.py`)
+- `promoters_count` (int, default 0, >= 0)
+- `passive_count` (int, default 0, >= 0)
+- `detractors_count` (int, default 0, >= 0)
+- `nps_available` (bool, default true) — false when NPS responses are not collected
+- `nps_unavailable_reason` (str, optional, min 3 chars) — required when `nps_available=false`
+
 **Flow:**
-1. Compute `NPS = ((promoters - detractors) / total) * 100`
-2. Store `batch_nps`, `nps_total_responses`, `nps_promoters`, `nps_passives`, `nps_detractors`
+1. If `nps_available` is false: set all NPS fields to NULL, append reason to `remarks`, set `status="Completed"`, `is_schema_locked=True`, delete edit history
+2. If `nps_available` is true:
+   1. Compute `NPS = ((promoters - detractors) / total) * 100` (total must be > 0)
+   2. Store `batch_nps`, `nps_total_responses`, `nps_promoters`, `nps_passives`, `nps_detractors`
 3. Set `status="Completed"`, `is_schema_locked=True`
-4. Trigger notification
+4. Delete batch's `batch_edit_history` rows in the same transaction
+5. Trigger notification
 
 ## Auto-Transition Rules (Scheduler)
 
@@ -241,7 +257,20 @@ The edit-history table is created by the startup `init_db()` schema initializati
 Only Finance team or Admin can update:
 - `finance_status` (Pending or Cleared)
 - `finance_status_check_date`
-- `finance_check`
+
+## Reapproval Fields
+
+The `REAPPROVAL_FIELDS` set in `backend/app/api/v1/batches/service.py` (lines 29-51) lists the fields that, when changed, trigger a reapproval cycle:
+
+```
+sow_number, category, entity_id, category_id, delivery_mode_id,
+accommodation_id, program_name, technology, domain, client_name,
+location_city, start_date, end_date, training_days, total_hours,
+total_enrollments, primary_manager_id, coordinator_id, sales_spoc_id,
+faculty_assigned_text, faculty_members
+```
+
+`batch_avg_feedback`, `batch_nps`, `nps_*`, `remarks`, `finance_status`, and other non-listed fields do NOT trigger reapproval.
 
 ## Approval Configuration
 

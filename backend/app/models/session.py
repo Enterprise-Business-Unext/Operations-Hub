@@ -133,7 +133,7 @@ class FacultyUtilization(Base):
 
     @property
     def coordinator_name(self) -> str | None:
-        return self.coordinator.full_name if self.coordinator else None
+        return self.coordinator
 
     @property
     def module_feedback(self) -> str | None:

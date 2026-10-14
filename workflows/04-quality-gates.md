@@ -42,38 +42,56 @@ There are two quality checkpoints (Gates) that must be completed before a batch 
 
 **Purpose:** Close the batch by computing NPS from promoter/passive/detractor counts.
 
-**Payload:**
+**Payload:** `BatchNpsClosureCreate` (defined in `backend/app/schemas/feedback.py`)
+
 ```json
 {
   "promoters_count": 35,
   "passive_count": 3,
-  "detractors_count": 2
+  "detractors_count": 2,
+  "nps_available": true,
+  "nps_unavailable_reason": null
 }
 ```
 
+**Schema Field Requirements:**
+| Field | Type | Default | Constraints |
+|-------|------|---------|-------------|
+| `promoters_count` | int | 0 | >= 0 |
+| `passive_count` | int | 0 | >= 0 |
+| `detractors_count` | int | 0 | >= 0 |
+| `nps_available` | bool | true | — |
+| `nps_unavailable_reason` | str | null | Min 3 chars; required when `nps_available` is false |
+
 **Preconditions (BOTH required):**
-1. `batch_avg_feedback` is not None (Gate 1 has calculated batch average)
-2. ALL sessions for the batch are terminal:
+1. `batch_avg_feedback` is not None (at least one rated delivery exists)
+2. ALL sessions (scheduled + logged) are terminal:
    - All `TrainingSession` rows are `Completed`, `Cancelled`, or `Not Conducted`
    - All `FacultyUtilization` rows are `Completed`, `Cancelled`, or `Not Conducted`
 
 **Validation Rules:**
 - `promoters_count`, `passive_count`, `detractors_count`: all `>= 0`
-- `total = promoters + passives + detractors` must be `> 0`
+- `nps_unavailable_reason` is required when `nps_available=false` (enforced by Pydantic `model_validator`)
+- When `nps_available=true`: `total = promoters + passives + detractors` must be `> 0`
 - Client-supplied `nps_score` or `average_feedback_score` are ignored (server computes)
 
 **Actions:**
-1. Compute `batch_nps = ((promoters - detractors) / total) * 100` (rounded to 2 decimal places)
-2. Store `nps_total_responses`, `nps_promoters`, `nps_passives`, `nps_detractors`
-3. Set `status="Completed"`
-4. Set `is_schema_locked=True`
-5. **Does NOT modify `batch_avg_feedback`** (Gate 1 owns that field)
-6. Delete the batch's `batch_edit_history` rows in the same transaction
+1. If `nps_available` is false:
+   - Set all NPS fields (`batch_nps`, `nps_total_responses`, `nps_promoters`, `nps_passives`, `nps_detractors`) to NULL
+   - Append NPS skip reason to `remarks`
+   - Set `status="Completed"`, `is_schema_locked=True`
+   - Delete batch's `batch_edit_history` rows
+2. If `nps_available` is true:
+   - Compute `batch_nps = ((promoters - detractors) / total) * 100` (rounded to 2 decimal places)
+   - Store `nps_total_responses`, `nps_promoters`, `nps_passives`, `nps_detractors`
+3. Set `status="Completed"`, `is_schema_locked=True`
+4. Delete batch's `batch_edit_history` rows in the same transaction
+5. Trigger notification
 
 **Failure Modes:**
 - `batch_avg_feedback is None` → 409 Conflict: "Quality Checkpoint 1 must be completed before batch closure"
 - Non-terminal sessions exist → 409 Conflict: "Every session must have a terminal outcome before batch closure"
-- Total responses = 0 → 422 Unprocessable Entity
+- `nps_available=true` and total responses = 0 → 422 Unprocessable Entity
 
 ## Batch Average Feedback Calculation
 

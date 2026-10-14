@@ -59,18 +59,21 @@
 | `schedule_complete` | Boolean | Default False |
 | `approver_1_id` | UUID | FK to `users.id` |
 | `approver_2_id` | UUID | FK to `users.id` |
-| `approver_1_status` | String(20) | Default "Pending" |
-| `approver_2_status` | String(20) | Default "Pending" |
+| `approver_1_status` | String(20) | Default "Pending" (ApprovalStatus enum) |
+| `approver_2_status` | String(20) | Default "Pending" (ApprovalStatus enum) |
 | `approver_1_approved_at` | TIMESTAMPTZ | Nullable |
 | `approver_2_approved_at` | TIMESTAMPTZ | Nullable |
+| `reapproval_count` | Integer | Default 0 |
+| `last_reapproval_at` | TIMESTAMPTZ | Nullable |
+| `last_reapproval_by` | UUID | FK to `users.id`, nullable |
+| `reapproval_changes` | JSON | Before/after field values, nullable |
 | `primary_manager_id` | UUID | FK to `users.id` |
 | `coordinator_id` | UUID | FK to `users.id` |
 | `sales_spoc_id` | UUID | FK to `users.id` |
 | `faculty_members` | JSON | Array of faculty objects |
 | `faculty_assigned_text` | String(500) | Legacy raw names |
-| `finance_status` | String(50) | Default "Pending" |
+| `finance_status` | String(50) | Default "Pending" (values: "Pending", "Cleared") |
 | `finance_status_check_date` | Date | Nullable |
-| `finance_check` | Integer | Nullable |
 | `batch_avg_feedback` | Numeric(3,2) | Nullable |
 | `batch_nps` | Numeric(6,2) | Nullable |
 | `nps_total_responses` | Integer | Nullable |
@@ -91,22 +94,22 @@
 - `faculty_utilizations` → FacultyUtilization (cascade delete)
 - `approver_1` → User
 - `approver_2` → User
-
-**Unique Constraints:**
-- `batch_id` (unique, indexed)
+- `last_reapproval_by_user` → User
 
 **Computed Properties:**
+- `is_reapproval`: True if `reapproval_count > 0`
 - `delivery_mode`: Returns `delivery_mode_detail.name` or fallback
 - `sessions_conducted`: Returns `training_days` if Completed, else estimated
 - `completion_rate`: Computed from `sessions_conducted / training_days`
 - `scheduled_session_count`: Number of `TrainingSession` rows
-- `batch_avg_feedback`: Recalculated on every feedback submission when at least one rated delivery exists
 
-**Status Enum Values:**
-- `Requested`, `Approval1Pending`, `Approval2Pending`, `Approved`, `Upcoming`, `Ongoing`, `PendingForClosure`, `Completed`, `OnHold`, `Cancelled`, `Rejected`
+**Status Enum Values (BatchStatus):**
+- `Requested`, `Approval 1 Pending`, `Approval 2 Pending`, `Upcoming`, `Ongoing`, `Pending for Closure`, `Completed`, `OnHold`, `Cancelled`, `Rejected`
 
-**Approval Status Enum Values:**
+**Approval Status Enum Values (ApprovalStatus):**
 - `Pending`, `Approved`, `Rejected`
+
+> **Note:** `Approved` is NOT a BatchStatus value. It exists only as an ApprovalStatus value on `approver_1_status` / `approver_2_status`. When both approvers approve, the batch auto-transitions to `Upcoming` or `Ongoing`.
 
 ### BatchEditHistory
 | Field | Type | Description |
@@ -124,16 +127,14 @@ The table is created for existing and new databases by `init_db()` (no Alembic m
 |-------|------|-------------|
 | `id` | UUID | Primary key |
 | `batch_id` | UUID | FK to `batches.id`, indexed |
-| `sequence_number` | Integer | Auto-assigned order |
-| `week` | String(50) | Nullable |
 | `session_date` | Date | Indexed |
 | `day_name` | String(20) | Nullable |
 | `start_time` | Time | Nullable |
 | `end_time` | Time | Nullable |
-| `duration_hours` | Numeric(5,2) | Default 8.0 |
+| `duration_hours` | Numeric(5,2) | Default 8.00 |
 | `module` | Text | Topic name |
 | `trainer_name` | String(255) | Nullable, indexed |
-| `status` | String(30) | Default "Scheduled", indexed |
+| `status` | Enum(SessionStatus) | Default "Scheduled", indexed |
 | `created_at` | TIMESTAMPTZ | Audit timestamp |
 | `updated_at` | TIMESTAMPTZ | Audit timestamp |
 
@@ -144,11 +145,17 @@ The table is created for existing and new databases by `init_db()` (no Alembic m
 - `batch` → Batch
 - `utilizations` → FacultyUtilization
 
-**Computed Properties:**
+**Computed Properties (not persisted columns):**
+- `sequence_number`: Sequential order, computed at runtime in `SessionService.list_scheduled()` as `enumerate(start=1)` ordered by `session_date, module`
+- `week`: Week label string (e.g. "Week 1"), computed at runtime from `batch.start_date` as `(delta_days // 7) + 1`
 - `effective_status`: Returns Completed/Upcoming/Ongoing/Overdue based on date
 
-**Status Enum Values:**
-- `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `NotConducted`, `Rescheduled`
+> **Note:** `sequence_number` and `week` are NOT database columns. They are computed at runtime by the service layer (`sessions/service.py`, `list_scheduled()` method). The `schema.dbml` listing them as columns is stale and does not match the SQLAlchemy model.
+
+**Status Enum Values (SessionStatus):**
+- `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `Not Conducted`, `Rescheduled`
+
+> **Note:** `InProgress` is stored as `"InProgress"` (no space). `NotConducted` is stored as `"Not Conducted"` (with space).
 
 ### FacultyUtilization
 | Field | Type | Description |
@@ -161,20 +168,21 @@ The table is created for existing and new databases by `init_db()` (no Alembic m
 | `start_time` | Time | Nullable |
 | `end_time` | Time | Nullable |
 | `topic` | Text | Topic delivered |
-| `no_of_hours` | Numeric(5,2) | Default 8.0 |
+| `no_of_hours` | Numeric(5,2) | Default 8.00 |
 | `venue` | String(255) | Nullable |
 | `location_city` | String(100) | Nullable |
 | `mode_of_delivery` | String(50) | Default "Online" |
-| `status` | String(30) | Default "Scheduled", indexed |
+| `status` | Enum(SessionStatus) | Default "Scheduled", indexed |
 | `feedback_submitted` | Boolean | Default False |
 | `feedback_rating` | Numeric(3,2) | Nullable |
 | `feedback_notes` | Text | Nullable |
 | `outcome_reason` | Text | Nullable, required for Cancelled/Not Conducted |
 | `outcome_at` | TIMESTAMPTZ | Nullable |
-| `outcome_by` | UUID | FK to users.id, nullable |
+| `outcome_by` | UUID | FK to `users.id`, nullable |
 | `vertical` | String(50) | Nullable |
 | `program_type_id` | UUID | FK to `program_types.id`, nullable, indexed |
 | `faculty_type_id` | UUID | FK to `faculty_types.id`, nullable, indexed |
+| `coordinator_id` | UUID | FK to `users.id`, nullable, indexed |
 | `created_at` | TIMESTAMPTZ | Audit timestamp |
 | `updated_at` | TIMESTAMPTZ | Audit timestamp |
 
@@ -183,14 +191,21 @@ The table is created for existing and new databases by `init_db()` (no Alembic m
 - `training_session` → TrainingSession
 - `program_type` → ProgramType
 - `faculty_type` → FacultyType
+- `coordinator` → User (note: overridden by a `@property` below that resolves through the batch relationship)
 
 **Computed Properties:**
-- `faculty_type_name`: Resolved display name
-- `client`, `category`, `batch_code`, `coordinator`: Resolved from batch
+- `faculty_type_name`: Resolved display name from `faculty_type` relationship
+- `client`: Resolved from `batch.client_name`
+- `category`: Resolved from `batch.category`
+- `batch_code`: Resolved from `batch.batch_id`
+- `coordinator`: Property returning `batch.coordinator.full_name` (resolves through the batch, not the `coordinator_id` FK directly)
+- `coordinator_name`: Alias for `coordinator` property
+- `entity`: Resolved from `batch.entity.name`
+- `program`: Resolved from `batch.program_name`
 - `module_feedback`: Alias for `feedback_notes`
 
 **Status Enum Values:**
-- Same as TrainingSession: `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `NotConducted`, `Rescheduled`
+- Same as TrainingSession: `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `Not Conducted`, `Rescheduled`
 
 ## Lookup Tables
 

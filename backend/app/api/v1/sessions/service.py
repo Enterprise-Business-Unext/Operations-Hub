@@ -130,7 +130,7 @@ class SessionService:
             # Compute week dynamically from batch.start_date
             week_str = "—"
             if batch.start_date and s.session_date:
-                delta_days = (s.session_date - batch.start_date).days
+                delta_days = (s.session_date - batch.start_date.date()).days
                 week_num = (delta_days // 7) + 1
                 week_str = f"Week {week_num}"
             result.append({

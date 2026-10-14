@@ -66,7 +66,6 @@ class SessionRepository(ISessionRepository):
             joinedload(FacultyUtilization.batch).joinedload(Batch.entity),
             joinedload(FacultyUtilization.batch).joinedload(Batch.coordinator),
             joinedload(FacultyUtilization.faculty_type),
-            joinedload(FacultyUtilization.coordinator),
             joinedload(FacultyUtilization.program_type),
         ).join(Batch, FacultyUtilization.batch_id == Batch.id)
         if batch_ids is not None:
