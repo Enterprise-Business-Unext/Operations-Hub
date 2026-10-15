@@ -292,6 +292,7 @@ function BatchRow({
   return (
     <tr
       onClick={onOpenBatchDetail ? open : undefined}
+      onMouseDown={onOpenBatchDetail ? (e) => e.preventDefault() : undefined}
       onKeyDown={
         onOpenBatchDetail
           ? (event) => {
@@ -450,6 +451,7 @@ function SessionRow({
   return (
     <tr
       onClick={openBatch}
+      onMouseDown={openBatch ? (e) => e.preventDefault() : undefined}
       onKeyDown={
         openBatch
           ? (event) => {
@@ -545,6 +547,7 @@ export function ActiveBatchesView({
   const [sessionsFiltersOpen, setSessionsFiltersOpen] = useState(false);
   const batches = useMemo(() => data?.batches ?? [], [data]);
   const sessions = useMemo(() => data?.sessions ?? [], [data]);
+  const totalSessions = data?.total_sessions ?? 0;
 
   const batchSort = useTableSort(batches, BATCH_ACCESSORS, { descFirstKeys: BATCH_DESC_FIRST_KEYS });
   const sessionSort = useTableSort(sessions, SESSION_ACCESSORS, { descFirstKeys: SESSION_DESC_FIRST_KEYS });
@@ -582,14 +585,7 @@ export function ActiveBatchesView({
     [filteredBatches, batchStart, batchPageSize]
   );
 
-  const sessionStart = (sessionPage - 1) * sessionPageSize;
-  const pagedSessions = useMemo(
-    () => filteredSessions.slice(sessionStart, sessionStart + sessionPageSize),
-    [filteredSessions, sessionStart, sessionPageSize]
-  );
-
   const totalBatches = data?.total_batches ?? 0;
-  const totalSessions = data?.total_sessions ?? sessions.length;
 
   // Every scheduled row contributes: `/batches/active` returns all statuses on
   // the date (the repository applies no status filter), so cancelled and
@@ -930,7 +926,7 @@ export function ActiveBatchesView({
           <PaginationControls
             label="Ongoing sessions pages"
             currentPage={sessionPage}
-            totalItems={filteredSessions.length}
+            totalItems={totalSessions}
             pageSize={sessionPageSize}
             pageSizeOptions={PAGE_SIZE_OPTIONS}
             onPageChange={onSessionPageChange}
@@ -988,7 +984,7 @@ export function ActiveBatchesView({
                 )}
               </TableStateRow>
             ) : (
-              pagedSessions.map((session) => (
+              filteredSessions.map((session) => (
                 <SessionRow
                   key={`${session.session_type}-${session.id}`}
                   session={session}

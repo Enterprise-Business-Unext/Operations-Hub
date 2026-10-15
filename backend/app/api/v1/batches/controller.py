@@ -208,11 +208,13 @@ def get_active_batches(
     filter_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format, defaults to today"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    session_skip: int = Query(0, ge=0, alias="sessionSkip"),
+    session_limit: int = Query(50, ge=1, le=100, alias="sessionLimit"),
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """Get ongoing batches and sessions for a specific date with pagination."""
-    return service.get_active_batches(filter_date, current_user, skip, limit)
+    return service.get_active_batches(filter_date, current_user, skip, limit, session_skip, session_limit)
 
 
 @router.get("/{id}", response_model=BatchDetailResponse)

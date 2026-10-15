@@ -97,6 +97,8 @@ export function TableMenu({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => (open ? close() : setOpen(true))}
+        onMouseDown={(e) => e.preventDefault()}
+        onFocus={(e) => e.preventDefault()}
         title={label}
       >
         <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
@@ -114,6 +116,8 @@ export function TableMenu({
                 close();
                 item.onSelect();
               }}
+              onMouseDown={(e) => e.preventDefault()}
+              onFocus={(e) => e.preventDefault()}
               className={cn(
                 "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors hover:bg-accent",
                 item.tone === "destructive" && "text-destructive hover:bg-destructive/10"
@@ -175,6 +179,8 @@ export function ColumnsMenu<K extends string>({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => (open ? close() : setOpen(true))}
+        onMouseDown={(e) => e.preventDefault()}
+        onFocus={(e) => e.preventDefault()}
         title="Choose visible columns"
       >
         <Columns3 className="h-4 w-4" aria-hidden="true" />
@@ -205,6 +211,8 @@ export function ColumnsMenu<K extends string>({
                     type="checkbox"
                     checked={checked}
                     onChange={() => onToggle(column.key)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onFocus={(e) => e.preventDefault()}
                     className="h-4 w-4 rounded border-input accent-[hsl(214_88%_27%)]"
                   />
                   <span className="min-w-0 flex-1 truncate">{column.label}</span>
@@ -220,6 +228,8 @@ export function ColumnsMenu<K extends string>({
                 onShowAll();
                 close();
               }}
+              onMouseDown={(e) => e.preventDefault()}
+              onFocus={(e) => e.preventDefault()}
               className="mt-1 w-full rounded-lg border-t border-border px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
             >
               Show all columns
@@ -252,6 +262,8 @@ export function ExportButton<T>({
       size="sm"
       className="h-9 shrink-0 gap-1.5 px-2 text-xs"
       onClick={handleExport}
+      onMouseDown={(e) => e.preventDefault()}
+      onFocus={(e) => e.preventDefault()}
       disabled={rows.length === 0}
       title={rows.length === 0 ? "Nothing to export with the current filters" : `${label} (${rows.length} rows)`}
       {...buttonProps}
@@ -272,7 +284,7 @@ export function RefreshButton({
   label?: string;
 }) {
   return (
-    <Button variant="outline" size="sm" className={TOOL_BUTTON} onClick={onClick} disabled={isLoading}>
+    <Button variant="outline" size="sm" className={TOOL_BUTTON} onClick={onClick} onMouseDown={(e) => e.preventDefault()} onFocus={(e) => e.preventDefault()} disabled={isLoading}>
       <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} aria-hidden="true" />
       <span>{isLoading ? "Refreshing…" : label}</span>
     </Button>

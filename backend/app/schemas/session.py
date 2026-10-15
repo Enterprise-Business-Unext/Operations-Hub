@@ -91,7 +91,6 @@ class SessionBase(BaseModel):
     feedback_submitted: Optional[bool] = False
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
-    outcome_reason: Optional[str] = None
     vertical: Optional[str] = None  # Delivery vertical, e.g. IT/ITES
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None  # Engagement type, from faculty_types
@@ -115,14 +114,7 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    @model_validator(mode="after")
-    def validate_training_session_id(self):
-        # `Completed` may be logged directly at create time (the log form's
-        # feedback section becomes that day's feedback of record). The update
-        # path still routes completion through Gate 1 (sessions/service.py).
-        if self.status in ("Cancelled", "Not Conducted") and len((self.outcome_reason or "").strip()) < 3:
-            raise ValueError("outcome_reason is required for Cancelled or Not Conducted sessions")
-        return self
+    pass
 
 
 class SessionUpdate(BaseModel):
@@ -140,7 +132,6 @@ class SessionUpdate(BaseModel):
     feedback_submitted: Optional[bool] = None
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
-    outcome_reason: Optional[str] = None
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None
@@ -166,9 +157,6 @@ class SessionResponse(SessionBase):
     feedback_submitted: bool
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
-    outcome_reason: Optional[str] = None
-    outcome_at: Optional[datetime] = None
-    outcome_by: Optional[UUID] = None
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None

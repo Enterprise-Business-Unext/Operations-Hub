@@ -112,6 +112,8 @@ export function PaginationControls({
           size="sm"
           className={CONTROL_CLASS}
           onClick={() => onPageChange(validPage - 1)}
+          onMouseDown={(e) => e.preventDefault()}
+          onFocus={(e) => e.preventDefault()}
           disabled={atStart}
           title="Previous page"
         >
@@ -135,6 +137,8 @@ export function PaginationControls({
               size="sm"
               className={CONTROL_CLASS}
               onClick={() => onPageChange(Number(entry))}
+              onMouseDown={(e) => e.preventDefault()}
+              onFocus={(e) => e.preventDefault()}
               aria-current={isCurrent ? "page" : undefined}
               aria-label={`Page ${entry}`}
               style={isCurrent ? { backgroundColor: color ?? "var(--color-primary)" } : undefined}
@@ -149,6 +153,8 @@ export function PaginationControls({
           size="sm"
           className={CONTROL_CLASS}
           onClick={() => onPageChange(validPage + 1)}
+          onMouseDown={(e) => e.preventDefault()}
+          onFocus={(e) => e.preventDefault()}
           disabled={atEnd}
           title="Next page"
         >

@@ -435,7 +435,12 @@ export default function DashboardPage() {
     setIsLoadingActive(true);
     setActiveError(null);
     try {
-      const data = await api.getActiveBatches({ filterDate, limit: 100 });
+      const data = await api.getActiveBatches({ 
+        filterDate, 
+        limit: activeBatchPageSize,
+        sessionSkip: (activeSessionPage - 1) * activeSessionPageSize,
+        sessionLimit: activeSessionPageSize
+      });
       setActiveBatchesData(data);
     } catch (err: any) {
       console.error("Failed to load active batches:", err);
@@ -612,6 +617,13 @@ export default function DashboardPage() {
       fetchActiveBatches(activeFilterDate);
     }
   }, [activeFilterDate]);
+
+  // Re-fetch active batches when session pagination changes
+  useEffect(() => {
+    if (user && activeView === "active_batches") {
+      fetchActiveBatches(activeFilterDate);
+    }
+  }, [activeSessionPage, activeSessionPageSize, activeFilterDate]);
 
   // Re-fetch batches when filter dropdowns change in manager board / analytics views
   useEffect(() => {

@@ -270,6 +270,8 @@ export function TableFilters({
             aria-expanded={filtersOpen}
             aria-controls={filtersOpen ? filtersId : undefined}
             onClick={() => setFiltersOpen(!filtersOpen)}
+            onMouseDown={(e) => e.preventDefault()}
+            onFocus={(e) => e.preventDefault()}
           >
             <ListFilter className="h-4 w-4" aria-hidden="true" />
             <span>Filters</span>
@@ -308,6 +310,8 @@ export function TableFilters({
               <button
                 type="button"
                 onClick={() => sort.onChange(sort.sortKey, nextDirection(sort.sortDir))}
+                onMouseDown={(e) => e.preventDefault()}
+                onFocus={(e) => e.preventDefault()}
                 disabled={!sort.sortKey}
                 title={
                   sort.sortDir === "desc"
@@ -395,6 +399,8 @@ export function TableFilters({
               key={chip.key}
               type="button"
               onClick={chip.onClear}
+              onMouseDown={(e) => e.preventDefault()}
+              onFocus={(e) => e.preventDefault()}
               aria-label={`Remove ${chip.label} filter`}
               title={`Remove ${chip.label} filter`}
               className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-primary/10"
@@ -408,6 +414,8 @@ export function TableFilters({
             <button
               type="button"
               onClick={onClear}
+              onMouseDown={(e) => e.preventDefault()}
+              onFocus={(e) => e.preventDefault()}
               className="px-1.5 py-1 text-xs font-semibold text-primary hover:underline"
             >
               Clear all{displayedActiveCount > 0 ? ` (${displayedActiveCount})` : ""}
@@ -420,6 +428,8 @@ export function TableFilters({
         <button
           type="button"
           onClick={onClear}
+          onMouseDown={(e) => e.preventDefault()}
+          onFocus={(e) => e.preventDefault()}
           className="w-fit px-1.5 py-1 text-xs font-semibold text-primary hover:underline"
         >
           Clear all{displayedActiveCount > 0 ? ` (${displayedActiveCount})` : ""}

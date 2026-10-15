@@ -85,13 +85,9 @@ export function FullscreenTable({
 }: FullscreenTableProps) {
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
   const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
-  const [canPortal, setCanPortal] = useState(false);
+  const [canPortal, setCanPortal] = useState(true);
   const [fullscreenError, setFullscreenError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setCanPortal(true);
-  }, []);
 
   const applyFullscreen = useCallback(
     (next: boolean) => {
@@ -285,14 +281,16 @@ export function FullscreenTable({
                 }}
               >
                 {actions}
-                {showFullscreenButton && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={toggleFullscreen}
-                    aria-pressed={isFullscreen}
-                    title={isFullscreen ? exitFullscreenLabel : fullscreenLabel}
-                  >
+{showFullscreenButton && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={toggleFullscreen}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onFocus={(e) => e.preventDefault()}
+                      aria-pressed={isFullscreen}
+                      title={isFullscreen ? exitFullscreenLabel : fullscreenLabel}
+                    >
                     {isFullscreen ? (
                       <Minimize2 className="h-4 w-4" aria-hidden="true" />
                     ) : (

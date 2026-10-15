@@ -147,6 +147,22 @@ export interface CoordinatorMappingResponse {
   assigned_at: string;
 }
 
+export interface ForgotPasswordPayload {
+  email: string;
+}
+
+export interface ForgotPasswordResponse {
+  detail: string;
+}
+
+export interface ResetPasswordPayload {
+  token: string;
+  new_password: string;
+}
+
+export interface ResetPasswordResponse {
+  detail: string;
+}
 export interface Batch {
   id: string;
   batch_id: string;
@@ -263,6 +279,8 @@ export interface ActiveBatchesResponse {
   total_sessions: number;
   skip: number;
   limit: number;
+  session_skip: number;
+  session_limit: number;
 }
 
 export interface CreateBatchPayload {
@@ -983,11 +1001,15 @@ class ApiService {
     filterDate?: string; 
     skip?: number; 
     limit?: number; 
+    sessionSkip?: number;
+    sessionLimit?: number;
   }): Promise<ActiveBatchesResponse> {
     const query = new URLSearchParams();
     if (params?.filterDate) query.append("filter_date", params.filterDate);
     if (params?.skip) query.append("skip", String(params.skip));
     if (params?.limit) query.append("limit", String(params.limit));
+    if (params?.sessionSkip !== undefined) query.append("sessionSkip", String(params.sessionSkip));
+    if (params?.sessionLimit !== undefined) query.append("sessionLimit", String(params.sessionLimit));
     const qs = query.toString() ? `?${query.toString()}` : "";
     return this.request<ActiveBatchesResponse>(`/batches/active${qs}`);
   }
@@ -1369,6 +1391,21 @@ class ApiService {
 
   async getAuditLogs(skip: number = 0, limit: number = 100): Promise<AuditLog[]> {
     return this.request<AuditLog[]>(`/auth/audit-logs?skip=${skip}&limit=${limit}`);
+  }
+
+  // Auth password reset
+  async forgotPassword(email: string): Promise<ForgotPasswordResponse> {
+    return this.request<ForgotPasswordResponse>("/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<ResetPasswordResponse> {
+    return this.request<ResetPasswordResponse>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
   }
 }
 

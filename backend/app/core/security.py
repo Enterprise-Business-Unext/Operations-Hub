@@ -93,3 +93,36 @@ def decode_refresh_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def create_reset_token(
+    subject: Union[str, Any],
+    email: str,
+    expires_delta: Optional[timedelta] = None
+) -> str:
+    """Create a signed JWT token for password reset."""
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(hours=settings.RESET_TOKEN_TTL_HOURS)
+
+    to_encode = {
+        "exp": expire,
+        "sub": str(subject),
+        "email": email,
+        "type": "password_reset",
+    }
+
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
+
+
+def decode_reset_token(token: str) -> Optional[dict]:
+    """Decode and verify a password reset token."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "password_reset":
+            return None
+        return payload
+    except JWTError:
+        return None

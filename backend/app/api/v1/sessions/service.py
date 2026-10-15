@@ -70,18 +70,6 @@ class SessionService:
                 ),
             )
 
-    @staticmethod
-    def _record_outcome(session: FacultyUtilization, reason: Optional[str], user_id: Optional[UUID]) -> None:
-        clean_reason = reason.strip() if reason else ""
-        if len(clean_reason) < 3:
-            raise HTTPException(
-                status_code=422,
-                detail="An outcome reason of at least 3 characters is required",
-            )
-        session.outcome_reason = clean_reason
-        session.outcome_at = datetime.now(timezone.utc)
-        session.outcome_by = user_id
-
     def list(self, batch_id: Optional[UUID], faculty_name: Optional[str], status_filter: Optional[str], user_id: Optional[UUID] = None, all: bool = False) -> List[FacultyUtilization]:
         """Lists actual faculty delivery records (utilization ledger)."""
         if user_id and not all:
@@ -321,8 +309,6 @@ class SessionService:
                 raise HTTPException(status_code=422, detail="Training session does not belong to this batch")
 
         session = FacultyUtilization(**session_dict)
-        if session.status in (SessionStatus.Cancelled, SessionStatus.NotConducted):
-            self._record_outcome(session, session_in.outcome_reason, user_id)
         session = self.session_repo.create_utilization(session)
 
         if training_session and session.status in self.TERMINAL_STATUSES:
@@ -372,8 +358,6 @@ class SessionService:
                 status_code=409,
                 detail=f"Cannot change session status from {current_status.value} to {new_status.value}",
             )
-        if new_status in (SessionStatus.Cancelled, SessionStatus.NotConducted):
-            self._record_outcome(session, update_dict.get("outcome_reason"), user_id)
 
         training_session_id = update_dict.get("training_session_id", session.training_session_id)
         if training_session_id:
@@ -403,14 +387,14 @@ class SessionService:
     def cancel(self, session_id: UUID, reason: str, user_id: UUID) -> FacultyUtilization:
         return self.update(
             session_id,
-            SessionUpdate(status=SessionStatus.Cancelled.value, outcome_reason=reason),
+            SessionUpdate(status=SessionStatus.Cancelled.value),
             user_id,
         )
 
     def mark_not_conducted(self, session_id: UUID, reason: str, user_id: UUID) -> FacultyUtilization:
         return self.update(
             session_id,
-            SessionUpdate(status=SessionStatus.NotConducted.value, outcome_reason=reason),
+            SessionUpdate(status=SessionStatus.NotConducted.value),
             user_id,
         )
 
@@ -434,7 +418,6 @@ class SessionService:
             raise HTTPException(status_code=409, detail="Completed sessions cannot be rescheduled")
         self._validate_batch_date(batch, date_of_training)
         self._validate_time_window(start_time, end_time)
-        self._record_outcome(session, reason, user_id)
         session.date_of_training = date_of_training
         session.start_time = start_time
         session.end_time = end_time

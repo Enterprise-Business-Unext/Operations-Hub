@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = 60
     RATE_LIMIT_ENABLED: bool = True
 
+    # Forgot password rate limiting
+    FORGOT_PASSWORD_RATE_LIMIT: str = "5/minute"
+    FORGOT_PASSWORD_RATE_LIMIT_REQUESTS: int = 5
+    FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS: int = 300
+
     # Account lockout
     MAX_FAILED_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_DURATION_MINUTES: int = 15
@@ -100,6 +105,10 @@ class Settings(BaseSettings):
     REQUIRE_LOWERCASE: bool = True
     REQUIRE_NUMBERS: bool = True
     REQUIRE_SPECIAL_CHARS: bool = True
+
+    # Password reset token settings
+    RESET_TOKEN_TTL_HOURS: int = 1
+    RESET_TOKEN_TTL_SECONDS: int = 3600
 
     # Email settings
     SMTP_HOST: str = "localhost"

@@ -81,6 +81,11 @@ class IBatchRepository(ABC):
         pass
 
     @abstractmethod
+    def list_batch_ids_on_date(self, scope: BatchScope, target_date: date) -> List[UUID]:
+        """Get all batch IDs for a date (unpaginated) for session querying."""
+        pass
+
+    @abstractmethod
     def get_conducted_session_counts(self, batch_ids: Sequence[UUID]) -> Dict[UUID, int]:
         """Completed utilization rows per batch."""
         pass

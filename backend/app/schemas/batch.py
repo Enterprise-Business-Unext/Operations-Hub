@@ -409,5 +409,7 @@ class ActiveBatchesResponse(BaseModel):
     total_sessions: int
     skip: int
     limit: int
+    session_skip: int
+    session_limit: int
 
     model_config = ConfigDict(from_attributes=True)

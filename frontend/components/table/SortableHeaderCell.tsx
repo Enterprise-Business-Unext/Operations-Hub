@@ -84,6 +84,8 @@ export function SortableHeaderCell({
       <button
         type="button"
         onClick={() => onSort(columnKey)}
+        onMouseDown={(e) => e.preventDefault()}
+        onFocus={(e) => e.preventDefault()}
         title={
           isActive
             ? `Sorted ${sortDir === "asc" ? "ascending" : "descending"} — click to change`

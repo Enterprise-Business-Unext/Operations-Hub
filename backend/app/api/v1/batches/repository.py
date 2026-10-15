@@ -127,6 +127,15 @@ class BatchRepository(IBatchRepository):
             .all()
         )
 
+    def list_batch_ids_on_date(self, scope: BatchScope, target_date: date) -> List[UUID]:
+        """Get all batch IDs for a date (unpaginated) for session querying."""
+        return (
+            self._on_date_query(scope, target_date)
+            .with_entities(Batch.id)
+            .order_by(Batch.start_date.asc().nullslast())
+            .all()
+        )
+
     def get_conducted_session_counts(self, batch_ids: Sequence[UUID]) -> Dict[UUID, int]:
         if not batch_ids:
             return {}

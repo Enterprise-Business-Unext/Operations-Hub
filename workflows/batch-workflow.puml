@@ -1,0 +1,142 @@
+@startuml OPS-Batch-Workflow
+title Batch Workflow - Create, Submit, Approve, Reapprove and Cancel
+hide empty description
+
+start
+:Authenticated user starts batch creation;
+if (Coordinator or above,\nnot Admin, and on Delivery team?) then (yes)
+else (no)
+  :Reject with authorization error;
+  stop
+endif
+
+:Validate batch data:\nunique batch ID; dates valid and start not past;\ntraining days > 0 and <= calendar days;\nhours within allowed limit; enrollments >= 1;\nat least one faculty member;
+if (All validation passes and both approvers configured?) then (yes)
+  :Resolve lookup references and assign approvers;
+  :Assign creator as coordinator or sales SPOC when applicable;
+  :Create batch with status\nApproval 1 Pending;
+  :Send/log approval request notification;
+else (no)
+  :Return validation/configuration errors;\nDo not create batch;
+  stop
+endif
+
+if (Submit or resubmit later?) then (yes)
+  :Verify batch exists, caller has operational scope,\napprovers configured, and start date has not passed;
+  if (Submission valid?) then (yes)
+    :Assign configured approvers;\nreset both approval statuses to Pending;
+    :Set status Approval 1 Pending;
+  else (no)
+    :Reject submission;
+    stop
+  endif
+endif
+
+if (Approver 1 decides?) then (Approve)
+  :Verify caller is assigned approver 1\nand batch is Approval 1 Pending;
+  :Set approver 1 status Approved\nand record approval timestamp;
+  :Set status Approval 2 Pending;
+else (Reject)
+  :Verify caller is assigned approver 1\nand batch is Approval 1 Pending;
+  :Set approver 1 status Rejected;\nrecord reason in remarks;
+  :Set status Rejected;
+  stop
+endif
+
+if (Approver 2 decides?) then (Approve)
+  :Verify caller is assigned approver 2,\nlevel 1 approved, and status is Approval 2 Pending;
+  :Set approver 2 status Approved\nand record approval timestamp;
+  :Set approval reference and lock schema;
+  if (Batch start date is in future?) then (yes)
+    :Set status Upcoming;
+  else (no)
+    :Set status Ongoing;
+  endif
+else (Reject)
+  :Verify caller is assigned approver 2,\nlevel 1 approved, and status is Approval 2 Pending;
+  :Set approver 2 status Rejected;\nrecord reason in remarks;
+  :Set status Rejected;
+  stop
+endif
+
+:Batch is approved and in delivery lifecycle;
+while (Batch not Completed or Cancelled?) is (yes)
+  if (Qualifying business field changed?) then (yes)
+    :Verify caller has operational scope;\nreject edits to Completed or Cancelled batches;
+    :Record changed field before/after values\nin batch edit history;
+    :Increment reapproval metadata;\nclear approval timestamps;\nreset both approvers to Pending;\nassign configured approvers;\nunlock schema;
+    :Set status Approval 1 Pending;
+    :Send/log reapproval request with changed fields;
+    :Repeat level 1 then level 2 approval;
+    if (Either approver rejects?) then (yes)
+      :Set status Rejected;\nrecord rejection reason;
+    else (no)
+      :Set status Upcoming or Ongoing\naccording to start date;\nlock schema;
+    endif
+  else (no)
+    if (Non-qualifying field edit?) then (yes)
+      :Apply field-specific rules;\nremarks do not trigger reapproval;\nfinance fields require Finance team or Admin;
+    endif
+  endif
+
+  if (Authorized lifecycle status change?) then (yes)
+    :Require valid transition and reason;
+    if (Target status needs approval\nbut both approvals are incomplete?) then (yes)
+      :Keep/return batch to appropriate\napproval-pending status;
+    else (no)
+      :Record status-change audit entry\nin remarks and apply valid transition;
+    endif
+  endif
+
+  if (Batch cancellation requested?) then (yes)
+    :Verify coordinator-or-above role\nand operational scope;
+    :Set batch status Cancelled;\nrecord reason and actor;
+    :Cascade cancellation to all\nnon-terminal scheduled and logged sessions;
+    stop
+  endif
+
+  if (Batch start date reached while Upcoming?) then (yes)
+    :Set status Ongoing;
+  endif
+  if (Batch end date passed while Ongoing?) then (yes)
+    :Set status Pending for Closure;
+  endif
+
+  if (Authorized batch closure succeeds?) then (yes)
+    :Require all scheduled and logged sessions terminal\nand batch_avg_feedback not null;
+    :Compute NPS or record NPS unavailable reason;
+    :Set status Completed and lock schema;
+    :Delete batch edit history transactionally;
+    stop
+  endif
+endwhile (no)
+stop
+
+note right
+Creation itself initializes status to Approval 1 Pending.
+The submit endpoint can reassign configured approvers and reset
+both approval decisions to Pending.
+
+Reapproval-triggering fields include batch identity,
+classification, client, delivery, schedule, enrollment,
+ownership and faculty fields. Remarks and finance-only
+fields do not trigger reapproval.
+
+Schedule changes may be made while reapproval is pending;
+they remain subject to batch date/session-count validation.
+Manager/Admin direct approval is also available: Admin may
+bypass approver checks; a Manager must satisfy level-1 approval.
+
+Finance is a team, not a system role. Finance team
+members may update finance fields even when schema-locked.
+
+Cancellation is available before approval and from
+Requested, Approval 1 Pending, Approval 2 Pending, Upcoming,
+Ongoing, Pending for Closure and OnHold. It sets the batch
+to Cancelled and cascades to all non-terminal sessions.
+Cancelled is terminal.
+
+Valid operational status transitions and OnHold/resume
+rules are enforced by the lifecycle endpoint.
+end note
+@enduml

@@ -6,10 +6,11 @@ from fastapi import HTTPException, status
 
 from app.core.security import (
     create_access_token, create_refresh_token, get_password_hash, verify_password, validate_password_strength,
-    decode_refresh_token
+    decode_refresh_token, create_reset_token, decode_reset_token
 )
 from app.core.config import settings
 from app.core.email import generate_random_password, email_service
+from app.core.rate_limit import check_forgot_password_rate_limit
 from app.models.user import User, UserManagerMapping, AuditEventType, AuditLog
 from app.schemas.user import (
     CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate,
@@ -490,3 +491,150 @@ class AuthService:
     def get_audit_logs(self, skip: int = 0, limit: int = 100) -> List[AuditLog]:
         """Admin Only: Retrieve audit logs with pagination."""
         return self.user_repo.get_audit_logs(skip=skip, limit=limit)
+
+    def forgot_password(self, email: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
+        """Initiate forgot password flow - generates reset token and emails reset link."""
+        # Normalize email
+        email_normalized = str(email).lower().strip()
+        user = self.user_repo.get_by_email(email_normalized)
+        
+        # Always return generic success to avoid email enumeration
+        generic_response = {
+            "detail": "If an account with that email exists, a password reset link has been sent to the registered email address."
+        }
+        
+        # Rate limiting by IP
+        if ip_address:
+            import asyncio
+            try:
+                allowed, remaining, retry_after = asyncio.run(check_forgot_password_rate_limit(ip_address))
+                if not allowed:
+                    # Still return generic response to avoid information leakage
+                    # But log the rate limit event
+                    self.user_repo.log_audit_event(
+                        AuditEventType.PASSWORD_RESET_REQUESTED,
+                        user_id=user.id if user else None,
+                        user_email=email_normalized,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        details=f"Rate limited - {retry_after}s retry"
+                    )
+                    return generic_response
+            except Exception as e:
+                print(f"[RATE LIMIT] Error checking rate limit: {e}")
+        
+        if not user:
+            self.user_repo.log_audit_event(
+                AuditEventType.PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL,
+                user_id=None,
+                user_email=email_normalized,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details="User not found - rate limited"
+            )
+            return generic_response
+        
+        # Only process if account is active
+        if not user.is_active:
+            self.user_repo.log_audit_event(
+                AuditEventType.PASSWORD_RESET_REQUESTED,
+                user_id=user.id,
+                user_email=user.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details="Inactive account - no action taken"
+            )
+            return generic_response
+        
+        try:
+            # Generate reset token (JWT with TTL)
+            reset_token = create_reset_token(
+                subject=str(user.id),
+                email=user.email
+            )
+            
+            # Log audit event
+            self.user_repo.log_audit_event(
+                AuditEventType.PASSWORD_RESET_REQUESTED,
+                user_id=user.id,
+                user_email=user.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details="Password reset token generated"
+            )
+            
+            # Send email with reset link
+            import asyncio
+            try:
+                asyncio.run(email_service.send_forgot_password_email(
+                    to_email=user.email,
+                    full_name=user.full_name,
+                    reset_token=reset_token
+                ))
+            except Exception as e:
+                print(f"[EMAIL] Failed to send forgot password email: {e}")
+            
+            return generic_response
+        except Exception as e:
+            print(f"[ERROR] Failed to process forgot password for {email_normalized}: {e}")
+            return generic_response
+
+    def reset_password(self, token: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
+        """Reset password using a valid reset token."""
+        # Decode and validate token
+        payload = decode_reset_token(token)
+        if not payload:
+            self.user_repo.log_audit_event(
+                AuditEventType.PASSWORD_RESET_REQUESTED,
+                user_id=None,
+                user_email=payload.get("email") if payload else None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details="Invalid or expired reset token"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token. Please request a new password reset."
+            )
+        
+        user_id = payload.get("sub")
+        email = payload.get("email")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid token payload"
+            )
+        
+        # Validate password strength
+        password_errors = validate_password_strength(new_password)
+        if password_errors:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(password_errors))
+        
+        user = self.user_repo.get_active_by_id(UUID(user_id))
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found or inactive")
+        
+        # Verify email matches token
+        if user.email.lower() != email.lower():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token does not match user")
+        
+        # Reset password and unlock account
+        was_locked = user.locked_until is not None
+        self.user_repo.update(
+            user,
+            hashed_password=get_password_hash(new_password),
+            failed_login_attempts=0,
+            locked_until=None,
+        )
+        
+        # Log audit event
+        self.user_repo.log_audit_event(
+            AuditEventType.PASSWORD_CHANGE,
+            user_id=user.id,
+            user_email=user.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details="Password reset via token" + (" (account unlocked)" if was_locked else "")
+        )
+        
+        return {"detail": "Password has been reset successfully. You can now log in with your new password."}

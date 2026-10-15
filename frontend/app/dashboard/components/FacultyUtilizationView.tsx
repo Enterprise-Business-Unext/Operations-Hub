@@ -173,29 +173,8 @@ const UTILIZATION_COLUMN_DEFS = [
     accessor: (row: TrainingSession) => row.feedback_submitted,
     sortable: false,
   },
-  {
-    key: "outcomeReason",
-    label: "Outcome Reason",
-    accessor: (row: TrainingSession) => row.outcome_reason || "",
-    sortable: false,
-  },
-  { key: "outcomeAt", label: "Outcome At", accessor: (row: TrainingSession) => row.outcome_at || "", sortable: false },
-  { key: "outcomeBy", label: "Outcome By", accessor: (row: TrainingSession) => row.outcome_by || "", sortable: false },
   { key: "createdAt", label: "Created At", accessor: (row: TrainingSession) => row.created_at || "" },
   { key: "updatedAt", label: "Updated At", accessor: (row: TrainingSession) => row.updated_at || "", sortable: false },
-  { key: "id", label: "ID", accessor: (row: TrainingSession) => row.id || "", sortable: false },
-  {
-    key: "trainingSessionId",
-    label: "Training Session ID",
-    accessor: (row: TrainingSession) => row.training_session_id || "",
-    sortable: false,
-  },
-  {
-    key: "programTypeId",
-    label: "Program Type ID",
-    accessor: (row: TrainingSession) => row.program_type_id || "",
-    sortable: false,
-  },
 ] as const satisfies readonly UtilizationColumnDef[];
 
 type ColumnKey = (typeof UTILIZATION_COLUMN_DEFS)[number]["key"];
@@ -237,14 +216,8 @@ const DEFAULT_HIDDEN: readonly ColumnKey[] = [
   "startTime",
   "endTime",
   "feedbackSubmitted",
-  "outcomeReason",
-  "outcomeAt",
-  "outcomeBy",
   "createdAt",
   "updatedAt",
-  "id",
-  "trainingSessionId",
-  "programTypeId",
 ];
 
 // Mirrors the on-screen column order so the file reads the same way as the
@@ -270,14 +243,8 @@ const EXPORT_COLUMNS: readonly CsvColumn<TrainingSession>[] = [
   { key: "start_time", label: "Start Time" },
   { key: "end_time", label: "End Time" },
   { key: "feedback_submitted", label: "Feedback Submitted" },
-  { key: "outcome_reason", label: "Outcome Reason" },
-  { key: "outcome_at", label: "Outcome At" },
-  { key: "outcome_by", label: "Outcome By" },
   { key: "created_at", label: "Created At" },
   { key: "updated_at", label: "Updated At" },
-  { key: "id", label: "ID" },
-  { key: "training_session_id", label: "Training Session ID" },
-  { key: "program_type_id", label: "Program Type ID" },
 ];
 
 interface FacultyUtilizationViewProps {
@@ -452,12 +419,6 @@ const CELL_DEFS: Record<ColumnKey, (row: TrainingSession) => CellDef> = {
   endTime: (row) => boldText(formatTime(row.end_time)),
   feedbackSubmitted: (row) => ({ content: <YesNo value={row.feedback_submitted} /> }),
   feedbackRating: (row) => numberCell(row.feedback_rating),
-  outcomeReason: (row) => ellipsis(row.outcome_reason, ELLIPSIS_STYLE, true),
-  outcomeAt: (row) => boldText(formatDateTime(row.outcome_at, "") || null),
-  outcomeBy: (row) => monoId(row.outcome_by),
-  id: (row) => monoId(row.id),
-  trainingSessionId: (row) => monoId(row.training_session_id),
-  programTypeId: (row) => monoId(row.program_type_id),
   createdAt: (row) => boldText(formatDateTime(row.created_at, "") || null),
   updatedAt: (row) => boldText(formatDateTime(row.updated_at, "") || null),
 };

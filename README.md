@@ -2,6 +2,16 @@
 
 An enterprise operations platform for managing corporate training batches, training schedules, faculty allocations, financial milestone tracking, and quality feedback.
 
+## Documentation
+
+- [User guide and presentation walkthrough](docs/USER_GUIDE.md) — account access,
+  role-based navigation, end-to-end user workflows, troubleshooting, and a
+  slide-ready presentation outline.
+- [Complete workflow reference](WORKFLOWS_COMPLETE.md) — technical workflow and
+  API summary.
+- [Workflow documents](workflows/) — detailed lifecycle, schedule, quality,
+  authorization, and data-model references.
+
 ---
 
 ## Architecture Overview

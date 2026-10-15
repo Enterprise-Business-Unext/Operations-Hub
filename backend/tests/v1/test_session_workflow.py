@@ -46,9 +46,6 @@ def test_cancel_session_records_reason_and_updates_timetable(client, coord_token
 
     assert response.status_code == 200
     assert response.json()["status"] == "Cancelled"
-    assert response.json()["outcome_reason"] == "Trainer unavailable"
-    assert response.json()["outcome_at"] is not None
-    assert response.json()["outcome_by"] is not None
     db_session.refresh(scheduled)
     assert scheduled.status == SessionStatus.Cancelled
 
@@ -87,7 +84,6 @@ def test_session_reschedule_updates_delivery_and_timetable(client, coord_token_h
     assert response.status_code == 200
     assert response.json()["status"] == "Scheduled"
     assert response.json()["date_of_training"].startswith("2026-10-12")
-    assert response.json()["outcome_reason"] == "Faculty availability changed"
     db_session.refresh(scheduled)
     assert scheduled.session_date == date(2026, 10, 12)
     assert scheduled.start_time.isoformat() == "10:00:00"
@@ -141,7 +137,7 @@ def test_create_session_can_be_logged_directly_as_completed(client, coord_token_
     assert batch.batch_avg_feedback == Decimal("4.50")
 
 
-def test_create_session_still_requires_outcome_reason_for_cancelled(client, coord_token_headers, db_session):
+def test_create_session_can_be_cancelled_without_outcome_reason(client, coord_token_headers, db_session):
     batch, _scheduled, _utilization = _create_linked_session(db_session)
 
     response = client.post(
@@ -158,8 +154,8 @@ def test_create_session_still_requires_outcome_reason_for_cancelled(client, coor
         headers=coord_token_headers,
     )
 
-    assert response.status_code == 422
-    assert "outcome_reason" in response.text
+    assert response.status_code == 201
+    assert response.json()["status"] == "Cancelled"
 
 
 def test_scheduled_timetable_cannot_exceed_training_days(client, coord_token_headers, db_session):
@@ -324,13 +320,11 @@ def test_faculty_utilization_excludes_non_delivery_outcomes(db_session):
     assert {row.faculty_name for row in active_rows} == active_names
 
 
-def test_faculty_utilization_export_includes_outcome_columns(
+def test_faculty_utilization_export_excludes_outcome_columns(
     client, coord_token_headers, db_session
 ):
     _batch, _scheduled, utilization = _create_linked_session(db_session)
     utilization.status = SessionStatus.Cancelled
-    utilization.outcome_reason = "Trainer unavailable"
-    utilization.outcome_at = datetime(2026, 10, 10, tzinfo=timezone.utc)
     db_session.commit()
 
     response = client.get(
@@ -340,6 +334,8 @@ def test_faculty_utilization_export_includes_outcome_columns(
 
     assert response.status_code == 200
     rows = list(csv.reader(response.text.splitlines()))
-    assert rows[0][-2:] == ["Outcome Reason", "Outcome At"]
-    assert rows[1][-2] == "Trainer unavailable"
-    assert rows[1][-1].startswith("2026-10-10T00:00:00")
+    # Verify headers don't include outcome columns
+    assert "Outcome Reason" not in rows[0]
+    assert "Outcome At" not in rows[0]
+    # Verify the row has the expected number of columns (11 columns now)
+    assert len(rows[1]) == 11

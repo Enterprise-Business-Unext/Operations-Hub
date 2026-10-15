@@ -348,7 +348,9 @@ class BatchService:
         filter_date: Optional[str], 
         current_user: User,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        session_skip: int = 0,
+        session_limit: int = 50
     ) -> ActiveBatchesResponse:
         """Get ongoing batches and sessions for a specific date with pagination."""
         from app.schemas.batch import ActiveBatchItem, ActiveSessionItem, ActiveBatchesResponse
@@ -406,11 +408,14 @@ class BatchService:
                 batch_nps=b.batch_nps,
             ))
 
+        # Get ALL batch IDs for this date (not just current page) for session querying
+        all_batch_ids = self.batch_repo.list_batch_ids_on_date(scope, filter_date_obj)
+
         # Get sessions for this date
         session_items = []
-        batches_by_id = {b.id: b for b in batches}
+        batches_by_id = {b.id: b for b in self.batch_repo.list_scoped_on_date(scope, filter_date_obj)}  # Get all batches for session data
 
-        for ts in self.batch_repo.list_scheduled_sessions_on_date(batch_ids, filter_date_obj):
+        for ts in self.batch_repo.list_scheduled_sessions_on_date(all_batch_ids, filter_date_obj):
             batch = batches_by_id.get(ts.batch_id)
             session_items.append(ActiveSessionItem(
                 id=str(ts.id),
@@ -431,7 +436,7 @@ class BatchService:
                 mode_of_delivery=batch.delivery_mode if batch else "Online",
             ))
 
-        for fu in self.batch_repo.list_actual_sessions_on_date(batch_ids, filter_date_obj):
+        for fu in self.batch_repo.list_actual_sessions_on_date(all_batch_ids, filter_date_obj):
             batch = batches_by_id.get(fu.batch_id)
             session_items.append(ActiveSessionItem(
                 id=str(fu.id),
@@ -455,9 +460,9 @@ class BatchService:
         # Sort sessions by start_time ASC (NULLS LAST)
         session_items.sort(key=lambda s: (s.start_time is None, s.start_time or ""))
 
-        # Apply pagination to sessions
+        # Apply separate pagination to sessions
         total_sessions = len(session_items)
-        session_items = session_items[skip:skip + limit]
+        session_items = session_items[session_skip:session_skip + session_limit]
 
         return ActiveBatchesResponse(
             filter_date=filter_date_str,
@@ -467,6 +472,8 @@ class BatchService:
             total_sessions=total_sessions,
             skip=skip,
             limit=limit,
+            session_skip=session_skip,
+            session_limit=session_limit,
         )
 
     def _sync_pending_approvers(self) -> None:
@@ -815,8 +822,6 @@ class BatchService:
             now = datetime.now(timezone.utc)
             for fs in self.batch_repo.list_non_terminal_faculty_sessions(batch.id):
                 fs.status = SessionStatus.Cancelled
-                fs.outcome_at = now
-                fs.outcome_by = current_user.id
                 fs.updated_at = now
 
             for ts in self.batch_repo.list_non_terminal_training_sessions(batch.id):

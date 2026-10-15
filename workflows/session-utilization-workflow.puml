@@ -1,0 +1,134 @@
+@startuml OPS-Session-Utilization-Workflow
+title Session Workflow - Add Timetable Sessions and Log Faculty Utilization
+hide empty description
+
+start
+:Coordinator+ requests to add a session\nor log actual utilization;
+if (Authenticated, authorized and batch in caller's scope?) then (yes)
+else (no)
+  :Reject with authorization or scope error;
+  stop
+endif
+if (Batch is Completed?) then (yes)
+  :Reject session changes;
+  stop
+endif
+
+if (Add a planned timetable session?) then (yes)
+  :Validate batch and session date within batch bounds;
+  :Validate required topic and any supplied fields;
+  if (Matching batch/date/module already exists?) then (yes)
+    :Reject duplicate schedule row;
+    stop
+  else (no)
+    :Infer day_name when omitted;
+    :Create TrainingSession with status Scheduled;
+    :Compute sequence number and week at read time;
+    if (Faculty email available?) then (yes)
+      :Send session-scheduled email;
+    else (no)
+      :Log faculty name without sending email;
+    endif
+  endif
+endif
+
+if (Import a timetable instead?) then (yes)
+  :Upload supported Excel/CSV file;\nparse Flat, TOC, Curriculum or Topic-column format;
+  :Preview extracted rows and validation errors;\nno persistence during ingest;
+  if (Coordinator applies valid preview?) then (yes)
+    :Revalidate batch scope, dates, duplicates,\nfaculty requirement and session count;
+    if (Any row invalid or resulting count > training_days?) then (yes)
+      :Reject entire apply; persist nothing;
+      stop
+    endif
+    if (Missing session slots?) then (yes)
+      if (Batch has default faculty and enough weekdays?) then (yes)
+        :Add generated placeholder sessions;
+      else (no)
+        :Reject entire apply; persist nothing;
+        stop
+      endif
+    endif
+    :Persist all timetable rows atomically;\nset Scheduled and update schedule_complete;
+  else (no)
+    :Discard preview without persistence;
+  endif
+endif
+
+if (Log actual delivery?) then (yes)
+  :Validate batch scope, date bounds,\nvalid time window and required topic;
+  :Resolve faculty by active user ID/name;\ntry Faculty-role matches, then active users;\nretain provided unmatched name as free text;
+  if (No faculty name provided?) then (yes)
+    :Reject with validation error;
+    stop
+  endif
+  :Optionally link to TrainingSession timetable row;
+  :Create FacultyUtilization record;\nstatus starts Scheduled;
+  if (Status is Cancelled or Not Conducted?) then (yes)
+    if (Outcome reason provided?) then (yes)
+      :Set outcome actor and timestamp if omitted;
+    else (no)
+      :Reject; reason is required;
+      stop
+    endif
+  endif
+  :Recalculate batch average feedback\nwhen a rated completed delivery exists;
+endif
+
+while (Utilization is not terminal?) is (yes)
+  if (Delivery underway?) then (yes)
+    :Set status InProgress;
+  endif
+
+  if (Update utilization?) then (yes)
+    :Validate scope, time window and batch date bounds;
+    if (Attempt to set Completed through generic update?) then (yes)
+      :Reject; Completed is reserved for Gate 1;
+    else (no)
+      :Apply allowed changes;
+    endif
+  endif
+
+  if (Reschedule?) then (yes)
+    :Require new date/time and valid time window;
+    :Update date/time; reset status to Scheduled;\nrecord outcome reason, actor and timestamp;
+  endif
+
+  if (Cancel or mark Not Conducted?) then (yes)
+    :Require outcome reason (minimum 3 characters);
+    :Set terminal status, actor and timestamp;
+    if (Linked timetable row exists?) then (yes)
+      :Synchronize timetable status;
+    endif
+  endif
+
+  if (Complete delivery through Gate 1?) then (yes)
+    if (Already Completed, Cancelled or Not Conducted?) then (yes)
+      :Reject with 409 Conflict;
+    else (no)
+      :Validate rating 1.0-5.0,\ntopic feedback >= 3 characters,\nstudents present >= 0;
+      if (Feedback valid?) then (yes)
+        :Set status Completed and feedback_submitted;
+        :Store rating and feedback notes;
+        :Mark linked timetable row Completed;
+        :Recalculate batch_avg_feedback\nfrom rated Completed deliveries only;
+      else (no)
+        :Return validation error;
+      endif
+    endif
+  endif
+endwhile (no)
+
+:Session outcome is terminal:\nCompleted, Cancelled or Not Conducted;
+:Batch closure remains separate and requires\nall sessions terminal plus a rated delivery;
+stop
+
+note right
+Faculty time-overlap/double-booking across batches
+is not checked during schedule import or delivery logging.
+
+TrainingSession is the planned timetable; FacultyUtilization
+is the actual delivery ledger. A utilization may optionally
+link to a timetable row.
+end note
+@enduml

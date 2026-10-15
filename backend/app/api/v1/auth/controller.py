@@ -8,7 +8,8 @@ from app.models.user import User
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token, TokenPair,
     CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode,
-    ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate, AuditLogResponse
+    ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate, AuditLogResponse, ForgotPasswordRequest,
+    ResetPasswordRequest, ResetPasswordResponse
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 from app.api.deps_services import get_auth_service
@@ -191,11 +192,24 @@ def delete_coordinator_mapping(
     return service.delete_mapping(mapping_id)
 
 
-@router.get("/audit-logs", response_model=List[AuditLogResponse], dependencies=[Depends(require_admin)])
-def get_audit_logs(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+@router.post("/forgot-password")
+def forgot_password(
+    data: ForgotPasswordRequest,
+    request: Request,
     service: AuthService = Depends(get_auth_service),
 ) -> Any:
-    """Admin Only: Retrieve audit logs with pagination."""
-    return service.get_audit_logs(skip=skip, limit=limit)
+    """Public endpoint: Request password reset - sends reset link via email."""
+    client = get_client_info(request)
+    return service.forgot_password(data.email, ip_address=client["ip_address"], user_agent=client["user_agent"])
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+def reset_password(
+    data: ResetPasswordRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),
+) -> Any:
+    """Public endpoint: Reset password using token from email."""
+    client = get_client_info(request)
+    return service.reset_password(data.token, data.new_password, ip_address=client["ip_address"], user_agent=client["user_agent"])
+

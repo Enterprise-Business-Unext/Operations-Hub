@@ -139,6 +139,15 @@ export default function LoginPage() {
               </div>
             </div>
 
+            <div className="flex items-center justify-end">
+              <a
+                href="/forgot-password"
+                className="text-sm text-primary hover:underline"
+              >
+                Forgot password?
+              </a>
+            </div>
+
             <Button type="submit" loading={isLoading} size="lg" className="mt-2 w-full">
               <span>{isLoading ? "Signing in..." : "Sign in"}</span>
               <ArrowRight size={18} aria-hidden="true" />

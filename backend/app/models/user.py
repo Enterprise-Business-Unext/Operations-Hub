@@ -12,6 +12,8 @@ class AuditEventType(str, enum.Enum):
     LOGOUT = "logout"
     PASSWORD_CHANGE = "password_change"
     PASSWORD_RESET_ADMIN = "password_reset_admin"
+    PASSWORD_RESET_REQUESTED = "password_reset_requested"
+    PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL = "password_reset_requested_unknown_email"
     ACCOUNT_LOCKED = "account_locked"
     ACCOUNT_UNLOCKED = "account_unlocked"
     USER_CREATED = "user_created"
