@@ -1,7 +1,7 @@
 from typing import Generator, List, Optional, Set
 from sqlalchemy import text
 from uuid import UUID
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -11,19 +11,29 @@ from app.core.security import decode_access_token
 from app.models.user import User
 from app.api.v1.auth.repository import UserRepository
 
-security_scheme = HTTPBearer(auto_error=True)
+security_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
+    request: Request,
     db: Session = Depends(get_db),
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)
 ) -> User:
-    token = credentials.credentials
+    token = credentials.credentials if credentials else None
+    if not token:
+        token = request.cookies.get("auth_token")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials or token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     payload = decode_access_token(token)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials or token expired",
+            detail="Invalid token or expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
     

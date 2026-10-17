@@ -18,7 +18,7 @@ build
 coverage
 *.tsbuildinfo
 
-.env*.local
+.env*
 
 .vscode
 .idea

@@ -101,3 +101,16 @@ async def check_forgot_password_rate_limit(ip: str) -> Tuple[bool, int, int]:
         settings.FORGOT_PASSWORD_RATE_LIMIT_REQUESTS,
         settings.FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS
     )
+
+
+async def check_admin_password_reset_rate_limit(ip: str) -> Tuple[bool, int, int]:
+    """Check rate limit specifically for admin password reset endpoint (5/min)."""
+    if not settings.RATE_LIMIT_ENABLED:
+        return True, 999, 0
+
+    limiter = get_rate_limiter()
+    return await limiter.is_allowed(
+        f"admin_reset:{ip}",
+        5,  # 5 requests per minute
+        60  # 60 seconds window
+    )

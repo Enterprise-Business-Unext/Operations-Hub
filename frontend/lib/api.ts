@@ -10,11 +10,14 @@ function getApiBaseUrl(): string {
   const rawApiUrl = process.env.NEXT_PUBLIC_API_URL;
   if (!rawApiUrl) {
     if (process.env.NODE_ENV === "production") {
-      console.error(
-        "NEXT_PUBLIC_API_URL is not set. Falling back to http://127.0.0.1:8000/api/v1 — " +
-          "API calls will fail until this is configured."
+      throw new Error(
+        "NEXT_PUBLIC_API_URL is not set. API calls will fail until this is configured."
       );
     }
+    console.warn(
+      "NEXT_PUBLIC_API_URL is not set. Falling back to http://127.0.0.1:8000/api/v1 — " +
+        "API calls will fail until this is configured."
+    );
     return "http://127.0.0.1:8000/api/v1";
   }
   return rawApiUrl.endsWith("/api/v1") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api/v1`;
@@ -188,7 +191,7 @@ export interface Batch {
   calendar_days?: number | null;
   total_hours: number;
   total_enrollments: number;
-  status: "Requested" | "Approval 1 Pending" | "Approval 2 Pending" | "Approved" | "Upcoming" | "Ongoing" | "Completed" | "Cancelled" | "OnHold";
+  status: "Requested" | "Approval 1 Pending" | "Approval 2 Pending" | "Approved" | "Upcoming" | "Ongoing" | "Completed" | "Cancelled" | "OnHold" | "Rejected";
   is_schema_locked: boolean;
   approver_1_id?: string | null;
   approver_2_id?: string | null;
@@ -583,15 +586,20 @@ export class ApiError extends Error {
 
 const REQUEST_TIMEOUT_MS = 30000;
 
+function getCsrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "AbortError";
 }
 
 class ApiService {
   private getToken(): string | null {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("auth_token");
-    }
+    // Tokens are stored in HttpOnly cookies set by the backend, not localStorage.
+    // The browser attaches them automatically via `credentials: "include"`.
     return null;
   }
 
@@ -611,15 +619,13 @@ class ApiService {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
-    const token = this.getToken();
+    const isMutation = options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase());
+    const csrfToken = isMutation ? getCsrfToken() : null;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...(options.headers as Record<string, string>),
     };
-
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
 
     const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
 
@@ -636,7 +642,7 @@ class ApiService {
 
     let response: Response;
     try {
-      response = await fetch(url, { ...options, headers, signal: controller.signal });
+      response = await fetch(url, { ...options, headers, credentials: "include", signal: controller.signal });
     } catch (err) {
       if (isAbortError(err) || controller.signal.aborted) {
         throw new ApiError("The request timed out. Please check your connection and try again.", 0);
@@ -666,34 +672,18 @@ class ApiService {
         // use default error message
       }
 
-      // Handle token expiration with auto-refresh
+      // Handle token expiration with auto-refresh via HttpOnly cookie rotation
       if (response.status === 401 && retryCount < 1) {
         try {
-          const refreshToken = localStorage.getItem("refresh_token");
-          if (refreshToken) {
-            // Use cached refresh promise if available to prevent race conditions
-            let refreshData;
-            if (this.refreshPromise) {
-              refreshData = await this.refreshPromise;
-            } else {
-              this.refreshPromise = this.performTokenRefresh(refreshToken);
-              try {
-                refreshData = await this.refreshPromise;
-              } finally {
-                this.refreshPromise = null;
-              }
-            }
-            if (refreshData) {
-              localStorage.setItem("auth_token", refreshData.access_token);
-              localStorage.setItem("refresh_token", refreshData.refresh_token);
-              this.onTokensRefreshed?.({
-                access_token: refreshData.access_token,
-                refresh_token: refreshData.refresh_token,
-                user: refreshData.user,
-              });
-              // Retry the original request once
-              return this.request<T>(endpoint, options, retryCount + 1);
-            }
+          const refreshData = await this.performTokenRefresh();
+          if (refreshData) {
+            this.onTokensRefreshed?.({
+              access_token: refreshData.access_token,
+              refresh_token: refreshData.refresh_token,
+              user: refreshData.user,
+            });
+            // Retry the original request once (cookie now carries the new token)
+            return this.request<T>(endpoint, options, retryCount + 1);
           }
         } catch {
           // Refresh failed, fall through to error
@@ -720,16 +710,15 @@ class ApiService {
     }
   }
 
-  private async performTokenRefresh(
-    refreshToken: string
-  ): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
+  private async performTokenRefresh(): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
+    // Backend reads the `refresh_token` HttpOnly cookie and sets a new `auth_token` cookie.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        credentials: "include",
         signal: controller.signal,
       });
       if (refreshRes.ok) {
@@ -753,18 +742,19 @@ class ApiService {
     options: RequestInit = {},
     retryCount = 0
   ): Promise<Response> {
-    const token = this.getToken();
-    const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+    const isMutation = options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase());
+    const csrfToken = isMutation ? getCsrfToken() : null;
+    const headers: Record<string, string> = {
+      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      ...(options.headers as Record<string, string>),
+    };
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     let response: Response;
     try {
-      response = await fetch(url, { ...options, headers, signal: controller.signal });
+      response = await fetch(url, { ...options, headers, credentials: "include", signal: controller.signal });
     } catch (err) {
       if (isAbortError(err) || controller.signal.aborted) {
         throw new ApiError("The request timed out. Please try again.", 0);
@@ -776,23 +766,14 @@ class ApiService {
 
     if (response.status === 401 && retryCount < 1) {
       try {
-        const refreshToken = localStorage.getItem("refresh_token");
-        if (refreshToken) {
-          let refreshData = this.refreshPromise
-            ? await this.refreshPromise
-            : await (this.refreshPromise = this.performTokenRefresh(refreshToken).finally(() => {
-                this.refreshPromise = null;
-              }));
-          if (refreshData) {
-            localStorage.setItem("auth_token", refreshData.access_token);
-            localStorage.setItem("refresh_token", refreshData.refresh_token);
-            this.onTokensRefreshed?.({
-              access_token: refreshData.access_token,
-              refresh_token: refreshData.refresh_token,
-              user: refreshData.user,
-            });
-            return this.fetchWithAuth(url, options, retryCount + 1);
-          }
+        const refreshData = await this.performTokenRefresh();
+        if (refreshData) {
+          this.onTokensRefreshed?.({
+            access_token: refreshData.access_token,
+            refresh_token: refreshData.refresh_token,
+            user: refreshData.user,
+          });
+          return this.fetchWithAuth(url, options, retryCount + 1);
         }
       } catch {
         // Refresh failed, fall through to error
@@ -826,11 +807,16 @@ class ApiService {
     });
   }
 
-  async refreshToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string; user: User }> {
+  async refreshToken(): Promise<{ access_token: string; refresh_token: string; user: User }> {
+    // Backend reads the `refresh_token` HttpOnly cookie and rotates the `auth_token` cookie.
     return this.request<{ access_token: string; refresh_token: string; user: User }>("/auth/refresh", {
       method: "POST",
-      body: JSON.stringify({ refresh_token: refreshToken }),
     });
+  }
+
+  async logout(): Promise<void> {
+    // Backend clears the HttpOnly auth cookies via Set-Cookie Max-Age=0.
+    await this.fetchWithAuth(`${API_BASE}/auth/logout`, { method: "POST" });
   }
 
   async getMe(): Promise<User> {

@@ -1,4 +1,5 @@
 import io
+import json
 from datetime import datetime, timezone, date
 from decimal import Decimal
 from typing import Optional
@@ -6,6 +7,7 @@ from typing import Optional
 import pandas as pd
 from fastapi.responses import StreamingResponse
 
+from app.core.cache import RedisCacheService
 from app.models.batch import Batch
 from app.models.user import User
 from app.schemas.analytics import ManagerDashboardSummary, VerticalBreakdown
@@ -17,25 +19,26 @@ _ACTIVE_STATUSES = ["Upcoming", "Ongoing"]
 
 
 class AnalyticsService:
-    def __init__(self, analytics_repo: IAnalyticsRepository, user_repo: IUserRepository):
+    def __init__(self, analytics_repo: IAnalyticsRepository, user_repo: IUserRepository, cache: Optional[RedisCacheService] = None):
         self.analytics_repo = analytics_repo
         self.user_repo = user_repo
+        self.cache = cache or RedisCacheService()
 
     @staticmethod
     def _average(values) -> Optional[Decimal]:
         if not values:
             return None
-        valid_floats = []
+        valid_decimals = []
         for v in values:
-            val = v[0] if isinstance(v, (tuple, list)) else v
+            val = v[0]
             if val is not None:
                 try:
-                    valid_floats.append(float(val))
+                    valid_decimals.append(Decimal(str(val)))
                 except (ValueError, TypeError):
                     pass
-        if not valid_floats:
+        if not valid_decimals:
             return None
-        return Decimal(str(round(sum(valid_floats) / len(valid_floats), 2)))
+        return sum(valid_decimals) / Decimal(len(valid_decimals))
 
     def _get_scoped_batch_ids(self, current_user: Optional[User]) -> Optional[list]:
         """Batch IDs scoped to the manager hierarchy, or None for admin/unrestricted."""
@@ -51,6 +54,12 @@ class AnalyticsService:
         return scoped_ids
 
     def manager_dashboard(self, current_user: Optional[User] = None) -> ManagerDashboardSummary:
+        user_id = str(current_user.id) if current_user else "global"
+        cache_key = f"analytics:dashboard:{user_id}"
+        cached = self.cache.get("v1", cache_key)
+        if cached:
+            return ManagerDashboardSummary.model_validate_json(cached)
+
         scoped_ids = self._get_scoped_batch_ids(current_user)
 
         total_active = self.analytics_repo.count_batches(scoped_ids, _ACTIVE_STATUSES)
@@ -107,7 +116,7 @@ class AnalyticsService:
         # Sort verticals by active batches descending
         verticals.sort(key=lambda x: x.active_batches, reverse=True)
 
-        return ManagerDashboardSummary(
+        dashboard = ManagerDashboardSummary(
             total_active_batches=total_active,
             total_ongoing_sessions=total_ongoing_sessions,
             total_hours_delivered=total_hours_delivered,
@@ -118,6 +127,11 @@ class AnalyticsService:
             pending_gate2_closures=pending_gate2,
             vertical_distribution=verticals,
         )
+
+        user_id = str(current_user.id) if current_user else "global"
+        cache_key = f"analytics:dashboard:{user_id}"
+        self.cache.set("v1", cache_key, dashboard.model_dump_json(), ttl=60)
+        return dashboard
 
     def export_mbr(self, current_user: Optional[User] = None) -> StreamingResponse:
         scoped_ids = self._get_scoped_batch_ids(current_user)

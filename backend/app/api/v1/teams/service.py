@@ -1,15 +1,18 @@
 from typing import List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
+import json
 
 from app.models.user import Team
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse
 from app.api.v1.teams.repository_interfaces import ITeamRepository
+from app.core.cache import RedisCacheService
 
 
 class TeamService:
-    def __init__(self, team_repo: ITeamRepository):
+    def __init__(self, team_repo: ITeamRepository, cache: Optional[RedisCacheService] = None):
         self.team_repo = team_repo
+        self.cache = cache or RedisCacheService()
 
     def _enrich_team(self, team: Team) -> TeamResponse:
         count = self.team_repo.get_member_count(team.id)
@@ -22,8 +25,17 @@ class TeamService:
         department: Optional[str] = None,
         is_active: Optional[bool] = None
     ) -> List[TeamResponse]:
+        if department is None and is_active is None:
+            cache_key = "teams:default"
+            cached = self.cache.get("v1", cache_key)
+            if cached:
+                return [TeamResponse.model_validate(item) for item in json.loads(cached)]
+
         teams = self.team_repo.list_teams(department=department, is_active=is_active)
-        return [self._enrich_team(t) for t in teams]
+        result = [self._enrich_team(t) for t in teams]
+        if department is None and is_active is None:
+            self.cache.set("v1", "teams:default", json.dumps([r.model_dump(mode="json") for r in result]), ttl=600)
+        return result
 
     def get_team(self, team_id: UUID) -> TeamResponse:
         team = self.team_repo.get_by_id(team_id)
@@ -50,7 +62,9 @@ class TeamService:
             is_active=team_in.is_active
         )
         team = self.team_repo.create(team)
-        return self._enrich_team(team)
+        result = self._enrich_team(team)
+        self.cache.delete("v1", "teams:default")
+        return result
 
     def update_team(self, team_id: UUID, team_in: TeamUpdate) -> TeamResponse:
         team = self.team_repo.get_by_id(team_id)
@@ -81,7 +95,9 @@ class TeamService:
             description=update_data.get("description"),
             is_active=update_data.get("is_active")
         )
-        return self._enrich_team(team)
+        result = self._enrich_team(team)
+        self.cache.delete("v1", "teams:default")
+        return result
 
     def delete_team(self, team_id: UUID) -> dict:
         team = self.team_repo.get_by_id(team_id)
@@ -91,4 +107,5 @@ class TeamService:
         team_name = team.name
         self.team_repo.unassign_users(team_id)
         self.team_repo.delete(team)
+        self.cache.delete("v1", "teams:default")
         return {"detail": f"Team '{team_name}' successfully deleted"}

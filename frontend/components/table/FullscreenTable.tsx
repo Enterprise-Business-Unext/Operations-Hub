@@ -169,7 +169,6 @@ export function FullscreenTable({
       data-fullscreen={isFullscreen ? "true" : "false"}
       style={{
         padding: 0,
-        overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
@@ -181,7 +180,6 @@ export function FullscreenTable({
               zIndex: 1000,
               borderRadius: 0,
               padding: 16,
-              overflow: "hidden",
               background: fullscreenBackground,
               ...(strategy === "fixed"
                 ? {

@@ -79,7 +79,9 @@ class SessionService:
                     self._require_batch_scope(batch, user_id)
             else:
                 user = self.session_repo.get_active_user(user_id)
-                if user and (user.role or "").lower() != "admin":
+                if not user:
+                    return []
+                if (user.role or "").lower() != "admin":
                     scope_ids = set(self.user_repo.get_manager_scope_user_ids(user))
                     if not scope_ids:
                         return []

@@ -1,20 +1,31 @@
 from typing import List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
+import json
 
 from app.models.user import Role
-from app.schemas.user import RoleCreate, RoleUpdate
+from app.schemas.user import RoleCreate, RoleUpdate, RoleResponse
 from app.api.v1.roles.repository_interfaces import IRoleRepository
+from app.core.cache import RedisCacheService
 
 VALID_SYSTEM_ROLES = {"Admin", "Manager", "Coordinator", "Sales", "Faculty"}
 
 
 class RoleService:
-    def __init__(self, role_repo: IRoleRepository):
+    def __init__(self, role_repo: IRoleRepository, cache: Optional[RedisCacheService] = None):
         self.role_repo = role_repo
+        self.cache = cache or RedisCacheService()
 
-    def list_roles(self, is_active: Optional[bool] = None) -> List[Role]:
-        return self.role_repo.list_roles(is_active=is_active)
+    def list_roles(self, is_active: Optional[bool] = None) -> List[RoleResponse]:
+        cache_key = "roles:default"
+        cached = self.cache.get("v1", cache_key)
+        if cached:
+            return [RoleResponse.model_validate(item) for item in json.loads(cached)]
+
+        roles = self.role_repo.list_roles(is_active=is_active)
+        result = [RoleResponse.model_validate(r) for r in roles]
+        self.cache.set("v1", cache_key, json.dumps([r.model_dump(mode="json") for r in result]), ttl=600)
+        return result
 
     def get_role(self, role_id: UUID) -> Role:
         role = self.role_repo.get_by_id(role_id)
@@ -41,7 +52,9 @@ class RoleService:
             system_role=role_in.system_role,
             is_active=role_in.is_active
         )
-        return self.role_repo.create(role)
+        result = self.role_repo.create(role)
+        self.cache.delete("v1", "roles:default")
+        return result
 
     def update_role(self, role_id: UUID, role_in: RoleUpdate) -> Role:
         role = self.get_role(role_id)
@@ -64,12 +77,14 @@ class RoleService:
         if "is_active" in update_data and update_data["is_active"] is not None:
             role.is_active = update_data["is_active"]
 
-        return self.role_repo.update(
+        result = self.role_repo.update(
             role,
             name=update_data.get("name"),
             system_role=update_data.get("system_role"),
             is_active=update_data.get("is_active")
         )
+        self.cache.delete("v1", "roles:default")
+        return result
 
     def delete_role(self, role_id: UUID) -> dict:
         role = self.get_role(role_id)
@@ -80,4 +95,5 @@ class RoleService:
                 detail=f"Cannot delete role '{role.name}' because {assigned_user_count} user(s) are currently assigned to it. Deactivate the role instead."
             )
         self.role_repo.delete(role)
+        self.cache.delete("v1", "roles:default")
         return {"detail": f"Role '{role.name}' successfully deleted"}

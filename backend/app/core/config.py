@@ -1,7 +1,20 @@
 from typing import List, Union, Optional
-from pydantic import AnyHttpUrl, field_validator, model_validator
+from ipaddress import ip_address
+from urllib.parse import urlsplit
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import re
+from sqlalchemy.engine import URL
+
+
+def _is_local_host(host: str) -> bool:
+    normalized_host = host.lower().rstrip(".")
+    if normalized_host == "localhost" or normalized_host.endswith(".localhost"):
+        return True
+    try:
+        return ip_address(normalized_host).is_loopback
+    except ValueError:
+        return False
 
 
 class Settings(BaseSettings):
@@ -23,29 +36,17 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Database - MUST be set via environment variables
+    # Database connection settings
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
-    DATABASE_URL: str
+    DATABASE_URL: str = ""
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
 
-    # CORS - Restricted to specific origins, no wildcards
-    # Defaults for development; override via env var BACKEND_CORS_ORIGINS in production
-    BACKEND_CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "null",
-    ]
+    BACKEND_CORS_ORIGINS: List[str] = []
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
@@ -58,25 +59,79 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = URL.create(
+                "postgresql+psycopg2",
+                username=self.POSTGRES_USER,
+                password=self.POSTGRES_PASSWORD,
+                host=self.POSTGRES_SERVER,
+                port=self.POSTGRES_PORT,
+                database=self.POSTGRES_DB,
+            ).render_as_string(hide_password=False)
+
+        database_url = self.DATABASE_URL
         if self.ENVIRONMENT == "production":
-            # Validate SECRET_KEY strength
-            if len(self.SECRET_KEY) < 32:
+            if len(self.SECRET_KEY) < 32 or self.SECRET_KEY in {
+                "your-secret-key-here-min-32-chars",
+                "dev_secret_key_super_secure_enterprise_jwt_2026",
+            }:
                 raise ValueError("SECRET_KEY must be at least 32 characters in production")
-            
-            # Validate CORS origins - no localhost in production
+
+            if self.DEBUG:
+                raise ValueError("DEBUG must be disabled in production")
+
             for origin in self.BACKEND_CORS_ORIGINS:
-                if "localhost" in origin or "127.0.0.1" in origin:
-                    raise ValueError(f"CORS origin '{origin}' contains localhost - not allowed in production")
-            
-            # Validate DATABASE_URL is not SQLite
-            if "sqlite" in self.DATABASE_URL.lower():
+                parsed_origin = urlsplit(origin)
+                if (
+                    origin in {"*", "null"}
+                    or parsed_origin.scheme != "https"
+                    or not parsed_origin.hostname
+                    or _is_local_host(parsed_origin.hostname)
+                    or parsed_origin.path not in {"", "/"}
+                    or parsed_origin.query
+                    or parsed_origin.fragment
+                    or parsed_origin.username
+                    or parsed_origin.password
+                ):
+                    raise ValueError(
+                        f"CORS origin '{origin}' must be an HTTPS origin without a path"
+                    )
+
+            if "sqlite" in database_url.lower():
                 raise ValueError("SQLite DATABASE_URL not allowed in production")
-        
+
+            if len(self.POSTGRES_PASSWORD) < 16:
+                raise ValueError("POSTGRES_PASSWORD must be at least 16 characters in production")
+
+            frontend_url = urlsplit(self.FRONTEND_URL)
+            if (
+                frontend_url.scheme != "https"
+                or not frontend_url.hostname
+                or _is_local_host(frontend_url.hostname)
+            ):
+                raise ValueError("FRONTEND_URL must be an HTTPS URL in production")
+
+            if not self.REDIS_PASSWORD or len(self.REDIS_PASSWORD) < 16:
+                raise ValueError(
+                    "REDIS_PASSWORD must be at least 16 characters in production"
+                )
+
+            if (
+                not self.SMTP_HOST
+                or _is_local_host(self.SMTP_HOST)
+                or not self.SMTP_USER
+                or not self.SMTP_PASSWORD
+                or not self.SMTP_TLS
+                or not self.EMAIL_FROM
+            ):
+                raise ValueError(
+                    "Production email requires SMTP_HOST, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM, and SMTP_TLS=true"
+                )
+
         return self
 
     # Optional FMS Integration - MUST be set via environment variables if used
     FMS_API_BASE_URL: str = ""
-    FMS_API_KEY: str = ""
 
     # Redis for rate limiting and caching
     REDIS_HOST: str = "localhost"

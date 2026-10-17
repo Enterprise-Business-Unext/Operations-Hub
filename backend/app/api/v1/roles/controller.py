@@ -6,10 +6,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.user import RoleCreate, RoleUpdate, RoleResponse
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, require_manager_or_admin
+from app.api.deps_services import get_cache
 from app.api.v1.roles.repository import RoleRepository
 from app.api.v1.roles.repository_interfaces import IRoleRepository
 from app.api.v1.roles.service import RoleService
+from app.core.cache import RedisCacheService
 
 router = APIRouter()
 
@@ -18,15 +20,15 @@ def get_role_repository(db: Session = Depends(get_db)) -> IRoleRepository:
     return RoleRepository(db)
 
 
-def get_role_service(role_repo: IRoleRepository = Depends(get_role_repository)) -> RoleService:
-    return RoleService(role_repo)
+def get_role_service(role_repo: IRoleRepository = Depends(get_role_repository), cache: RedisCacheService = Depends(get_cache)) -> RoleService:
+    return RoleService(role_repo, cache)
 
 
 @router.get("", response_model=List[RoleResponse])
 def list_roles(
     is_active: Optional[bool] = Query(None),
     service: RoleService = Depends(get_role_service),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_manager_or_admin)
 ) -> Any:
     """List all configured organizational roles and position titles."""
     return service.list_roles(is_active=is_active)
@@ -46,7 +48,7 @@ def create_role(
 def get_role_by_id(
     id: UUID,
     service: RoleService = Depends(get_role_service),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_manager_or_admin)
 ) -> Any:
     """Fetch details of a specific role by ID."""
     return service.get_role(id)

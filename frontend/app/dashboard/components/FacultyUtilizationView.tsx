@@ -7,6 +7,7 @@ import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
 import {
   ColumnsMenu,
+  CopyButton,
   ExportButton,
   FullscreenTable,
   PlainHeaderCell,
@@ -648,6 +649,7 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
               onShowAll={columns.showAll}
             />
             <ExportButton filename="faculty-utilization" columns={EXPORT_COLUMNS} rows={matchedRows} />
+            <CopyButton columns={EXPORT_COLUMNS} rows={matchedRows} />
             {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
           </>
         }

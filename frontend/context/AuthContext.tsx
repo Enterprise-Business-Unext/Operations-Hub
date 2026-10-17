@@ -23,9 +23,9 @@ const SESSION_COOKIE = "ops_session";
 function setSessionCookie(present: boolean) {
   if (typeof document === "undefined") return;
   if (present) {
-    document.cookie = `${SESSION_COOKIE}=1; path=/; SameSite=Lax`;
+    document.cookie = `${SESSION_COOKIE}=1; path=/; SameSite=Lax; Secure`;
   } else {
-    document.cookie = `${SESSION_COOKIE}=; path=/; Max-Age=0; SameSite=Lax`;
+    document.cookie = `${SESSION_COOKIE}=; path=/; Max-Age=0; SameSite=Lax; Secure`;
   }
 }
 
@@ -39,17 +39,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // that a `useCallback(..., [])` over a re-created `logout` would introduce.
   const logoutRef = useRef<() => void>(() => {});
 
-  const clearSession = useCallback(() => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(REFRESH_KEY);
+  const clearSession = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // Ignore logout errors; clear local state anyway.
     }
     setSessionCookie(false);
     setUser(null);
   }, []);
 
-  const logout = useCallback(() => {
-    clearSession();
+  const logout = useCallback(async () => {
+    await clearSession();
     router.replace("/login");
     router.refresh();
   }, [clearSession, router]);
@@ -57,23 +58,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   logoutRef.current = logout;
 
   const storeSession = useCallback((data: { access_token: string; refresh_token: string; user?: User }) => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      localStorage.setItem(REFRESH_KEY, data.refresh_token);
-    }
     setSessionCookie(true);
     if (data.user) setUser(data.user);
   }, []);
 
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     if (typeof window === "undefined") return false;
-    const storedRefreshToken = localStorage.getItem(REFRESH_KEY);
-    if (!storedRefreshToken) {
-      logoutRef.current();
-      return false;
-    }
     try {
-      const data = await api.refreshToken(storedRefreshToken);
+      const data = await api.refreshToken();
       storeSession(data);
       return true;
     } catch (err) {
@@ -103,8 +95,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      const storedToken = localStorage.getItem(TOKEN_KEY);
-      if (!storedToken) {
+      // Tokens live in HttpOnly cookies; the presence flag tells us whether a session exists.
+      const hasSession = document.cookie
+        .split("; ")
+        .some((c) => c.startsWith(`${SESSION_COOKIE}=`));
+      if (!hasSession) {
         if (!cancelled) setIsLoading(false);
         return;
       }
@@ -113,15 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const profile = await api.getMe();
         if (cancelled) return;
         setUser(profile);
-        // Restore the presence flag if it was cleared while tokens remained.
-        setSessionCookie(true);
       } catch (err) {
         if (cancelled) return;
         console.error("Session expired or invalid, attempting refresh:", err);
-        const hadRefreshToken = Boolean(localStorage.getItem(REFRESH_KEY));
-        if (hadRefreshToken) {
+        try {
           await refreshAccessToken();
-        } else {
+        } catch {
           clearSession();
         }
       } finally {
@@ -135,31 +127,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [refreshAccessToken, clearSession]);
 
-  // Keep multiple tabs consistent: logging out in one tab signs out the others.
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== TOKEN_KEY) return;
-      if (!event.newValue) {
-        setUser(null);
-        router.replace("/login");
-        router.refresh();
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [router]);
-
   const login = useCallback(
     async (email: string, password: string) => {
       setIsLoading(true);
-      clearSession();
+      await clearSession();
       try {
         const data = await api.login(email, password);
         storeSession(data);
         router.replace(data.user?.role?.toLowerCase() === "admin" ? "/admin" : "/");
         router.refresh();
       } catch (error) {
-        clearSession();
+        await clearSession();
         throw error;
       } finally {
         setIsLoading(false);

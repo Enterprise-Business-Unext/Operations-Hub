@@ -1,5 +1,6 @@
 from typing import List, Optional
 from decimal import Decimal
+import json
 
 from app.models.user import User
 from app.schemas.faculty import (
@@ -8,14 +9,22 @@ from app.schemas.faculty import (
     DomainUtilization,
 )
 from app.api.v1.faculty.repository_interfaces import IFacultyRepository
+from app.core.cache import RedisCacheService
 
 
 class FacultyService:
-    def __init__(self, faculty_repo: IFacultyRepository):
+    def __init__(self, faculty_repo: IFacultyRepository, cache: Optional[RedisCacheService] = None):
         self.faculty_repo = faculty_repo
+        self.cache = cache or RedisCacheService()
 
     def list(self, faculty_type: Optional[str] = None, domain: Optional[str] = None) -> List[FacultyResponse]:
-        return [
+        if faculty_type is None and domain is None:
+            cache_key = "faculty:all"
+            cached = self.cache.get("v1", cache_key)
+            if cached:
+                return [FacultyResponse.model_validate(item) for item in json.loads(cached)]
+
+        result = [
             FacultyResponse(
                 id=fac.id,
                 full_name=fac.full_name,
@@ -28,6 +37,9 @@ class FacultyService:
             )
             for fac in self.faculty_repo.list_active_faculty()
         ]
+        if faculty_type is None and domain is None:
+            self.cache.set("v1", "faculty:all", json.dumps([r.model_dump(mode="json") for r in result]), ttl=300)
+        return result
 
     def utilization(self) -> FacultyUtilizationOverview:
         faculty_users = self.faculty_repo.list_active_faculty()

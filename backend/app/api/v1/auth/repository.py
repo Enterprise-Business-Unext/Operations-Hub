@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional, Set
 from uuid import UUID
 
@@ -14,6 +15,8 @@ from app.models.user import (
 )
 from app.models.batch import ApprovalConfiguration
 from app.api.v1.auth.repository_interfaces import IUserRepository
+
+logger = logging.getLogger(__name__)
 
 
 class UserRepository(IUserRepository):
@@ -233,10 +236,9 @@ class UserRepository(IUserRepository):
                 user_agent=user_agent,
                 details=details,
             ))
-            self.db.commit()
-        except Exception:
-            # Audit logging must never break the caller.
-            self.db.rollback()
+        except Exception as e:
+            # Audit logging must never break the caller or rollback main transaction.
+            logger.error("Audit logging failure: %s", str(e))
 
     def get_audit_logs(self, skip: int = 0, limit: int = 100) -> List[AuditLog]:
         return (

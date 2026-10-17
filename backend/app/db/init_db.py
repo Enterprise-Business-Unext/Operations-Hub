@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import Enum as SAEnum, String, inspect, text
+from sqlalchemy import Enum as SAEnum, MetaData, String, Table, cast, inspect, text
 from app.core.database import SessionLocal, Base, engine
 from app.models.user import User, UserManagerMapping, Role, Team, AuditLog
 from app.models.batch import (
@@ -33,12 +33,13 @@ def _normalize_legacy_session_statuses(connection) -> None:
         if "status" not in columns:
             continue
 
+        table = Table(table_name, MetaData(), autoload_with=connection)
         for current_status, legacy_statuses in status_updates:
-            legacy_values = ", ".join(f"'{status}'" for status in legacy_statuses)
-            connection.execute(text(
-                f'UPDATE "{table_name}" SET status = \'{current_status}\' '
-                f"WHERE CAST(status AS TEXT) IN ({legacy_values})"
-            ))
+            connection.execute(
+                table.update()
+                .where(cast(table.c.status, String).in_(legacy_statuses))
+                .values(status=current_status)
+            )
 
 
 def _is_legacy_string_column(column_type) -> bool:

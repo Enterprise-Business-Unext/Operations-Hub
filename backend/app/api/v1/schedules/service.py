@@ -617,7 +617,7 @@ class ExcelIngestionService:
         if batch.status == "Completed":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Schedule cannot be applied to a completed batch")
         if not items:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Schedule upload contains no valid rows")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Schedule upload contains no valid rows")
 
         existing_sessions = schedule_repo.list_scheduled_sessions_for_batch(batch.id)
         existing_dates = {session.session_date for session in existing_sessions}
@@ -715,7 +715,7 @@ class ExcelIngestionService:
             # Aggregate similar errors for better readability
             error_summary = cls._aggregate_errors(errors)
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, 
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, 
                 detail={
                     "message": "Schedule was not applied",
                     "errors": errors,

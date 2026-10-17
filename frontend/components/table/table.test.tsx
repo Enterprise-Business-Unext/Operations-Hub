@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import {
   ColumnsMenu,
+  CopyButton,
   ExportButton,
   FullscreenTable,
   PlainHeaderCell,
@@ -394,6 +395,32 @@ describe('FullscreenTable', () => {
     const button = screen.getByRole('button', { name: 'Export' });
     expect(button).toHaveClass('px-2', 'text-xs');
     expect(button).toHaveTextContent('Export');
+  });
+
+  it('uses a compact copy button while keeping its accessible label', () => {
+    render(
+      <CopyButton
+        columns={[{ key: 'name', label: 'Name', value: (row: Row) => row.name }]}
+        rows={ROWS}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: 'Copy' });
+    expect(button).toHaveClass('px-2', 'text-xs');
+    expect(button).toHaveTextContent('Copy');
+  });
+
+  it('disables the copy button when there are no rows', () => {
+    render(
+      <CopyButton
+        columns={[{ key: 'name', label: 'Name', value: (row: Row) => row.name }]}
+        rows={[]}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: 'Copy' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Nothing to copy with the current filters');
   });
 
   it('portals fixed fullscreen above the page and exits on Escape', async () => {

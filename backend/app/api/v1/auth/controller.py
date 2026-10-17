@@ -1,8 +1,9 @@
 from typing import List, Any, Optional
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response
 from uuid import UUID
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import secrets
 
 from app.models.user import User
 from app.schemas.user import (
@@ -33,21 +34,91 @@ def get_client_info(request: Request) -> dict:
 def login(
     login_data: UserLogin, 
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service)
 ) -> Any:
     client = get_client_info(request)
-    return service.authenticate(login_data, ip_address=client["ip_address"], user_agent=client["user_agent"])
+    result = service.authenticate(login_data, ip_address=client["ip_address"], user_agent=client["user_agent"])
+    response.set_cookie(
+        key="auth_token",
+        value=result["access_token"],
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=result["refresh_token"],
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        key="ops_session",
+        value="1",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    # CSRF token: not HttpOnly so the frontend can read it and send X-CSRF-Token on mutations.
+    response.set_cookie(
+        key="csrf_token",
+        value=secrets.token_urlsafe(32),
+        httponly=False,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return result
 
 
 @router.post("/refresh", response_model=TokenPair)
 def refresh_token(
     data: RefreshTokenRequest,
     request: Request,
+    response: Response,
     service: AuthService = Depends(get_auth_service)
 ) -> Any:
     """Generate new access token using refresh token."""
     client = get_client_info(request)
-    return service.refresh_tokens(data.refresh_token, ip_address=client["ip_address"], user_agent=client["user_agent"])
+    result = service.refresh_tokens(data.refresh_token, ip_address=client["ip_address"], user_agent=client["user_agent"])
+    response.set_cookie(
+        key="auth_token",
+        value=result.access_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=result.refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    response.set_cookie(
+        key="ops_session",
+        value="1",
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return result
+
+
+@router.post("/logout")
+def logout(response: Response) -> Any:
+    """Clear HttpOnly auth cookies."""
+    response.delete_cookie(key="auth_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/")
+    response.delete_cookie(key="ops_session", path="/")
+    return {"detail": "Logged out"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -75,7 +146,7 @@ def get_my_reports(current_user: User = Depends(get_current_user), service: Auth
     return service.list_direct_reports(current_user)
 
 
-@router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_manager_or_admin)])
+@router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
 def list_users(service: AuthService = Depends(get_auth_service)) -> Any:
     """Admin Only: List all organization users with their assigned roles."""
     return service.list_all_users()
@@ -95,16 +166,19 @@ def create_user(
 def list_assignable_users(
     role: str = Query(..., pattern="^(Sales|Coordinator|Manager)$"),
     team_name: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_manager_or_admin),
     service: AuthService = Depends(get_auth_service),
 ) -> Any:
     return service.list_assignable_users(role, team_name=team_name)
 
 
 @router.get("/hierarchy", response_model=List[UserHierarchyNode], dependencies=[Depends(get_current_user)])
-def get_organization_hierarchy(service: AuthService = Depends(get_auth_service)) -> Any:
-    """Fetch the full organization reporting tree."""
-    return service.get_organization_hierarchy()
+def get_organization_hierarchy(
+    current_user: User = Depends(get_current_user),
+    service: AuthService = Depends(get_auth_service)
+) -> Any:
+    """Fetch the organization reporting tree scoped to the caller's visibility."""
+    return service.get_organization_hierarchy(current_user=current_user)
 
 
 @router.post("/users/admin-create", dependencies=[Depends(require_admin)])
@@ -190,6 +264,21 @@ def delete_coordinator_mapping(
 ) -> Any:
     """Admin Only: Remove a coordinator-manager assignment by its mapping ID."""
     return service.delete_mapping(mapping_id)
+
+
+@router.get(
+    "/audit-logs",
+    response_model=List[AuditLogResponse],
+    dependencies=[Depends(require_admin)],
+)
+def get_audit_logs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    service: AuthService = Depends(get_auth_service),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """Admin Only: Retrieve audit logs with pagination."""
+    return service.get_audit_logs(skip=skip, limit=limit)
 
 
 @router.post("/forgot-password")

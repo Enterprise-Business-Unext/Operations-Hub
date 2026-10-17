@@ -41,6 +41,22 @@ class FacultyResponse(FacultyBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class FacultyPublic(BaseModel):
+    id: UUID
+    full_name: str
+    phone: Optional[str] = None
+    faculty_type: str = "Internal Full-time"
+    domain: Optional[str] = None
+    fms_external_id: Optional[str] = None
+    fms_status: str = "Active"
+    standard_hourly_rate: Decimal = Decimal("0.00")
+    is_active: bool = True
+    role: str = "Faculty"
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DomainUtilization(BaseModel):
     domain: str
     faculty_count: int

@@ -193,6 +193,7 @@ Table batches {
     (primary_manager_id)
     (coordinator_id)
     (sales_spoc_id)
+    (status, domain, start_date)
   }
 }
 
@@ -262,6 +263,7 @@ Table faculty_utilization {
     (status)
     (program_type_id)
     (faculty_type_id)
+    (faculty_name, date_of_training)
   }
 }
 

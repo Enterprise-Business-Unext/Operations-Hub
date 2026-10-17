@@ -1,7 +1,10 @@
+import logging
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 def create_db_engine():
     db_url = settings.DATABASE_URL
@@ -23,11 +26,8 @@ def create_db_engine():
         return create_engine(db_url, **engine_kwargs)
     except Exception as e:
         if settings.ENVIRONMENT == "production":
-            raise RuntimeError(
-                f"PostgreSQL connection failed in production environment. "
-                f"DATABASE_URL={settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}. "
-                f"Original error: {e}"
-            ) from e
+            logger.error("PostgreSQL connection failed: %s", str(e))
+            raise RuntimeError("PostgreSQL connection failed in production environment.") from e
         
         # Development only: fallback to SQLite
         sqlite_fallback = "sqlite:///./ops_local.db"

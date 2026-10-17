@@ -7,6 +7,7 @@ import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
 import {
   ColumnsMenu,
+  CopyButton,
   ExportButton,
   FullscreenTable,
   PlainHeaderCell,
@@ -486,6 +487,7 @@ export function MyBatchesView({
               onShowAll={columns.showAll}
             />
             <ExportButton filename="my-batches" columns={EXPORT_COLUMNS} rows={filteredRows} />
+            <CopyButton columns={EXPORT_COLUMNS} rows={filteredRows} />
             {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
           </>
         }

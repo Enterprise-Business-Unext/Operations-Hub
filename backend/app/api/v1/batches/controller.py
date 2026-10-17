@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional, Any
 from uuid import UUID
 from datetime import datetime
@@ -8,6 +9,8 @@ from sqlalchemy import or_
 from app.models.batch import Batch
 from app.models.user import User
 from app.models.session import TrainingSession, FacultyUtilization
+
+logger = logging.getLogger(__name__)
 from app.schemas.batch import (
     ApprovalConfigurationBase,
     ApprovalConfigurationResponse,
@@ -25,10 +28,11 @@ from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.deps import (
     get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 )
-from app.api.deps_services import get_batch_service, get_batch_lifecycle_service
+from app.api.deps_services import get_batch_service, get_batch_lifecycle_service, get_cache
 from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.batches.service import BatchService
 from app.api.v1.notifications.service import NotificationService
+from app.core.cache import RedisCacheService
 from app.core.database import get_db
 
 router = APIRouter()
@@ -164,8 +168,8 @@ async def approve_batch(
             manager_email=batch.primary_manager.email if batch.primary_manager else None,
             sales_email=batch.sales_spoc.email if batch.sales_spoc else None
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Notification failed for batch %s: %s", batch.batch_id, str(exc))
 
     return batch
 
@@ -259,10 +263,13 @@ def update_batch_lifecycle_status(
     id: UUID,
     payload: BatchLifecycleStatusUpdate,
     service: BatchService = Depends(get_batch_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
     """Transition batch lifecycle status (e.g. OnHold, Cancelled, Upcoming, Ongoing) with mandatory reason."""
-    return service.update_lifecycle_status(id, payload.status, payload.reason, current_user)
+    result = service.update_lifecycle_status(id, payload.status, payload.reason, current_user)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
+    return result
 
 
 @router.post("/{id}/close", response_model=BatchResponse)
@@ -270,6 +277,7 @@ async def close_batch_gate2(
     id: UUID,
     closure_in: BatchNpsClosureCreate,
     service: BatchService = Depends(get_batch_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """
@@ -279,6 +287,7 @@ async def close_batch_gate2(
     detractor counts. When NPS is not available, a reason must be provided.
     """
     closed_batch = service.close_gate2(id, closure_in, current_user.id, current_user)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
 
     try:
         if closed_batch.batch_nps is None:
@@ -293,8 +302,8 @@ async def close_batch_gate2(
                 gate_name="Gate 2 (Batch NPS Closure)",
                 score=f"NPS: {closed_batch.batch_nps:+.0f}"
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Notification failed for batch %s: %s", closed_batch.batch_id, str(exc))
 
     return closed_batch
 

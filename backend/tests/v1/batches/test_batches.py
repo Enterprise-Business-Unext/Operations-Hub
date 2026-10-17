@@ -551,7 +551,12 @@ def test_operational_scope_users_can_edit_rejected_batches(client, coord_token_h
         headers=coord_token_headers,
     )
     assert response.status_code == 200, response.text
-    assert response.json()["program_name"] == "Updated After Rejection"
+    data = response.json()
+    assert data["program_name"] == "Updated After Rejection"
+    assert data["status"] == "Approval 1 Pending"
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    assert (data["reapproval_count"] or 0) >= 1
 
 
 def test_enum_values_enforced_at_db_level(db_session):

@@ -15,7 +15,9 @@ RUN apt-get -o Acquire::ForceIPv4=true update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir --user -r requirements.txt
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # Final runtime stage
 FROM docker.io/library/python:3.11-slim
@@ -29,17 +31,25 @@ RUN apt-get -o Acquire::ForceIPv4=true update \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed dependencies from builder
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
+# Copy installed dependencies to a path traversable by the non-root runtime user
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Copy application source code
 COPY . .
 
+# Add non-root user and drop privileges
+RUN addgroup --system --gid 1001 app \
+    && adduser --system --uid 1001 --ingroup app app \
+    && chown -R app:app /app
+
 # Expose FastAPI port
 EXPOSE 8000
+
+# Drop to non-root user before running the service
+USER app
 
 # Default startup command
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

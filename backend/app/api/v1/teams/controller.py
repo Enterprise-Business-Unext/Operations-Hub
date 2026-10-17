@@ -7,9 +7,11 @@ from app.core.database import get_db
 from app.models.user import User
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse
 from app.api.deps import get_current_user, require_admin
+from app.api.deps_services import get_cache
 from app.api.v1.teams.repository import TeamRepository
 from app.api.v1.teams.repository_interfaces import ITeamRepository
 from app.api.v1.teams.service import TeamService
+from app.core.cache import RedisCacheService
 
 router = APIRouter()
 
@@ -18,8 +20,8 @@ def get_team_repository(db: Session = Depends(get_db)) -> ITeamRepository:
     return TeamRepository(db)
 
 
-def get_team_service(team_repo: ITeamRepository = Depends(get_team_repository)) -> TeamService:
-    return TeamService(team_repo)
+def get_team_service(team_repo: ITeamRepository = Depends(get_team_repository), cache: RedisCacheService = Depends(get_cache)) -> TeamService:
+    return TeamService(team_repo, cache)
 
 
 @router.get("", response_model=List[TeamResponse])

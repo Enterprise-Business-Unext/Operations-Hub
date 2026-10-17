@@ -39,3 +39,21 @@ export function downloadCsv<T>(filename: string, columns: readonly CsvColumn<T>[
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+/** Sanitises a cell value for TSV — tabs/newlines are collapsed to a single space so the grid isn't broken on paste. */
+function sanitizeCell(value: string): string {
+  return value.replace(/[\t\n\r]+/g, " ");
+}
+
+/** Serialises rows to tab-separated text so it pastes into Excel one cell per column. */
+export function toTsv<T>(columns: readonly CsvColumn<T>[], rows: readonly T[]): string {
+  const header = columns.map((column) => sanitizeCell(column.label)).join("\t");
+  const body = rows.map((row) => columns.map((column) => sanitizeCell(cellText(row, column))).join("\t"));
+  return [header, ...body].join("\r\n");
+}
+
+/** Copies the rows to the clipboard as TSV. Never throws — silently no-ops when the clipboard is unavailable. */
+export async function copyTsv<T>(columns: readonly CsvColumn<T>[], rows: readonly T[]): Promise<void> {
+  if (rows.length === 0) return;
+  await navigator.clipboard?.writeText(toTsv(columns, rows));
+}

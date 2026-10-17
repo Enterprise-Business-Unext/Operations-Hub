@@ -1,0 +1,54 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements-dev.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Bandit SAST scan
+        run: |
+          cd backend
+          bandit -r . -ll
+
+      - name: Run pip-audit dependency scan
+        run: |
+          cd backend
+          pip-audit -r requirements.txt
+
+      - name: Run npm audit
+        run: |
+          cd frontend
+          npm audit --audit-level=moderate
+
+      - name: Run Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config: .gitleaks.toml

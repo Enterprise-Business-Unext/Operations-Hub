@@ -8,12 +8,16 @@ from fastapi import HTTPException, status
 
 from app.models.batch import (
     Accommodation,
+    ApprovalConfiguration,
     ApprovalStatus,
     Batch,
     BatchCategory,
     BatchStatus,
     DeliveryMode,
     Entity,
+    FacultyType,
+    ProgramType,
+    Vertical,
 )
 from app.models.batch_edit import BatchEditHistory
 from app.models.user import User
@@ -23,6 +27,7 @@ from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.v1.auth.repository_interfaces import IUserRepository
 from app.api.v1.batches.repository_interfaces import BatchScope, IBatchRepository
 from app.api.v1.gates.service import GatekeeperService
+from app.core.cache import RedisCacheService
 
 
 class BatchService:
@@ -55,10 +60,40 @@ class BatchService:
         batch_repo: IBatchRepository,
         user_repo: IUserRepository,
         gatekeeper: GatekeeperService,
+        cache: Optional[RedisCacheService] = None,
     ):
         self.batch_repo = batch_repo
         self.user_repo = user_repo
         self.gatekeeper = gatekeeper
+        self.cache = cache or RedisCacheService()
+
+    # Batch option catalogue keyed by the URL option type used in
+    # batch_options/controller.py OPTION_MODELS.
+    _OPTION_TYPE_BY_MODEL = {
+        BatchCategory: "categories",
+        DeliveryMode: "delivery-modes",
+        Accommodation: "accommodations",
+        Entity: "entities",
+        FacultyType: "faculty-types",
+        Vertical: "verticals",
+        ProgramType: "program-types",
+    }
+
+    @classmethod
+    def _option_type_name(cls, option_model) -> str:
+        return cls._OPTION_TYPE_BY_MODEL.get(option_model, option_model.__tablename__)
+
+    @staticmethod
+    def _row_to_dict(row) -> dict:
+        data = {}
+        for column in row.__table__.columns:
+            value = getattr(row, column.name)
+            if isinstance(value, UUID):
+                value = str(value)
+            elif isinstance(value, (datetime, date)):
+                value = value.isoformat()
+            data[column.name] = value
+        return data
 
     @staticmethod
     def _is_unrestricted(current_user: User) -> bool:
@@ -151,7 +186,7 @@ class BatchService:
         # Validate total_hours against training_days * max_hours_per_day
         if batch_in.total_hours > batch_in.training_days * max_hours_per_day:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Total hours must be between 0.5 and training_days × max_hours_per_day ({batch_in.training_days} × {max_hours_per_day} = {batch_in.training_days * max_hours_per_day})"
             )
 
@@ -211,13 +246,27 @@ class BatchService:
         return option.id
 
     def get_approval_config(self):
+        cache_key = "approval-config:default"
+        cached = self.cache.get("v1", cache_key)
+        if cached:
+            data = json.loads(cached)
+            config = ApprovalConfiguration(
+                id=UUID(data["id"]),
+                approver_1_id=UUID(data["approver_1_id"]) if data.get("approver_1_id") else None,
+                approver_2_id=UUID(data["approver_2_id"]) if data.get("approver_2_id") else None,
+            )
+            config.updated_at = data.get("updated_at")
+            return config
+
         config = self.batch_repo.get_approval_config()
         if not config:
             config = self.batch_repo.create_approval_config()
+        self.cache.set("v1", cache_key, json.dumps(self._row_to_dict(config)), ttl=600)
         return config
-
     def update_approval_config(self, config_in: ApprovalConfigurationBase):
-        config = self.get_approval_config()
+        config = self.batch_repo.get_approval_config()
+        if not config:
+            config = self.batch_repo.create_approval_config()
         values = config_in.model_dump(exclude_unset=True)
         for field, value in values.items():
             if value:
@@ -225,7 +274,9 @@ class BatchService:
                 if not user or user.role.lower() not in {"admin", "manager"}:
                     raise HTTPException(status_code=422, detail=f"{field} must reference an active Admin or Manager")
             setattr(config, field, value)
-        return self.batch_repo.save_approval_config(config)
+        result = self.batch_repo.save_approval_config(config)
+        self.cache.delete("v1", "approval-config:default")
+        return result
 
     def submit_for_approval(self, batch_id: UUID, current_user: User) -> Batch:
         batch = self.get(batch_id, current_user)
@@ -531,14 +582,14 @@ class BatchService:
         update_data = batch_in.model_dump(exclude_unset=True)
         if "training_days" in update_data and update_data["training_days"] is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="training_days cannot be null.",
             )
         if "training_days" in update_data:
             scheduled_days = self.batch_repo.get_scheduled_session_counts([batch.id]).get(batch.id, 0)
             if update_data["training_days"] < scheduled_days:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
                         f"training_days cannot be less than the {scheduled_days} "
                         "scheduled sessions already in the timetable."
@@ -576,7 +627,7 @@ class BatchService:
                         "delivery and cannot be deleted; the end date cannot be reduced past them."
                     )
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=detail,
                 )
         finance_fields = {"finance_status", "finance_status_check_date"}
@@ -617,7 +668,7 @@ class BatchService:
             ) or 8
             if eff_hours > eff_days * max_hours:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
                         f"Total hours cannot exceed training_days × max_hours_per_day "
                         f"({eff_days} × {max_hours} = {eff_days * max_hours})"
@@ -861,7 +912,16 @@ class BatchService:
         )
 
     def list_options(self, option_model):
-        return self.batch_repo.list_active_options(option_model)
+        option_type = self._option_type_name(option_model)
+        cache_key = f"options:{option_type}"
+        cached = self.cache.get("v1", cache_key)
+        if cached:
+            return json.loads(cached)
+
+        result = self.batch_repo.list_active_options(option_model)
+        data = [self._row_to_dict(r) for r in result]
+        self.cache.set("v1", cache_key, json.dumps(data), ttl=600)
+        return data
 
     def create_option(self, option_model, name: str, description: Optional[str] = None):
         clean_name = name.strip()
@@ -872,17 +932,22 @@ class BatchService:
 
         # Delivery mode carries a per-day hour ceiling that batch creation validates against.
         extra = {"max_hours_per_day": 8} if option_model is DeliveryMode else {}
-        return self.batch_repo.create_option_instance(option_model, clean_name, description, **extra)
+        option = self.batch_repo.create_option_instance(option_model, clean_name, description, **extra)
+        self.cache.delete("v1", f"options:{self._option_type_name(option_model)}")
+        return option
 
     def update_option(self, option_model, option_id: UUID, name: str, description: Optional[str] = None):
         option = self.batch_repo.get_option_by_id(option_model, option_id)
         if not option:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
-        return self.batch_repo.update_option_instance(option, name.strip(), description)
+        result = self.batch_repo.update_option_instance(option, name.strip(), description)
+        self.cache.delete("v1", f"options:{self._option_type_name(option_model)}")
+        return result
 
     def deactivate_option(self, option_model, option_id: UUID):
         option = self.batch_repo.get_option_by_id(option_model, option_id)
         if not option:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
         self.batch_repo.deactivate_option_instance(option)
+        self.cache.delete("v1", f"options:{self._option_type_name(option_model)}")
         return {"detail": "Option deactivated"}

@@ -4,11 +4,28 @@ Run the commands below from the repository root unless stated otherwise.
 
 ## Start the database and backend
 
+Copy the repository `.env.example` to `.env` and configure the required
+production secrets and SMTP values before starting the default production
+stack. For local development, set `ENVIRONMENT=development` and `DEBUG=True`
+in `.env`.
+
 ```powershell
 docker compose up -d db backend
 ```
 
-The backend container uses the PostgreSQL database configured by `DATABASE_URL` in `docker-compose.yml`.
+The backend builds its PostgreSQL URL from `POSTGRES_SERVER`, `POSTGRES_PORT`,
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`, safely encoding
+credentials that contain URL-reserved characters.
+
+If startup logs show `Permission denied` for `/root/.local/bin/uvicorn`,
+rebuild the backend image so it uses the shared, non-root-readable virtual
+environment:
+
+```powershell
+docker compose build --no-cache backend
+docker compose up -d --force-recreate backend
+docker compose logs --tail=100 backend
+```
 
 ## Initialize or update the database
 
@@ -91,7 +108,7 @@ From the `backend` directory, with the virtual environment activated and Postgre
 
 ```powershell
 cd backend
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 alembic upgrade head
 python scripts/seed_teams.py
 python scripts/create_admin.py --email admin@enterprise-ops.com

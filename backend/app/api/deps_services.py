@@ -1,7 +1,11 @@
+from typing import Optional
+
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.core.cache import RedisCacheService
 from app.core.database import get_db
+
 from app.api.v1.auth.repository import UserRepository
 from app.api.v1.auth.repository_interfaces import IUserRepository
 from app.api.v1.auth.service import AuthService
@@ -28,6 +32,15 @@ from app.api.v1.fms_sync.service import FmsSyncService
 from app.api.v1.schedules.repository import ScheduleRepository
 from app.api.v1.schedules.repository_interfaces import IScheduleRepository
 from app.api.v1.schedules.service import ExcelIngestionService
+
+_cache_service: Optional[RedisCacheService] = None
+
+
+def get_cache() -> RedisCacheService:
+    global _cache_service
+    if _cache_service is None:
+        _cache_service = RedisCacheService()
+    return _cache_service
 
 
 # --- Repositories ---
@@ -83,23 +96,25 @@ def get_gatekeeper_service(
     return GatekeeperService(gate_repo, lifecycle_service)
 
 
-def get_auth_service(user_repo: IUserRepository = Depends(get_user_repository)) -> AuthService:
-    return AuthService(user_repo)
+def get_auth_service(user_repo: IUserRepository = Depends(get_user_repository), cache: RedisCacheService = Depends(get_cache)) -> AuthService:
+    return AuthService(user_repo, cache)
 
 
 def get_batch_service(
     batch_repo: IBatchRepository = Depends(get_batch_repository),
     user_repo: IUserRepository = Depends(get_user_repository),
     gatekeeper: GatekeeperService = Depends(get_gatekeeper_service),
+    cache: RedisCacheService = Depends(get_cache),
 ) -> BatchService:
-    return BatchService(batch_repo, user_repo, gatekeeper)
+    return BatchService(batch_repo, user_repo, gatekeeper, cache)
 
 
 def get_analytics_service(
     analytics_repo: IAnalyticsRepository = Depends(get_analytics_repository),
     user_repo: IUserRepository = Depends(get_user_repository),
+    cache: RedisCacheService = Depends(get_cache),
 ) -> AnalyticsService:
-    return AnalyticsService(analytics_repo, user_repo)
+    return AnalyticsService(analytics_repo, user_repo, cache)
 
 
 def get_session_service(
@@ -111,8 +126,8 @@ def get_session_service(
     return SessionService(session_repo, user_repo, lifecycle_service, gatekeeper)
 
 
-def get_faculty_service(faculty_repo: IFacultyRepository = Depends(get_faculty_repository)) -> FacultyService:
-    return FacultyService(faculty_repo)
+def get_faculty_service(faculty_repo: IFacultyRepository = Depends(get_faculty_repository), cache: RedisCacheService = Depends(get_cache)) -> FacultyService:
+    return FacultyService(faculty_repo, cache)
 
 
 def get_fms_sync_service(fms_repo: IFmsSyncRepository = Depends(get_fms_sync_repository)) -> FmsSyncService:

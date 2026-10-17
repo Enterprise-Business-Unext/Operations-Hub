@@ -1,6 +1,8 @@
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone, timedelta
+import asyncio
+import json
 
 from fastapi import HTTPException, status
 
@@ -9,8 +11,9 @@ from app.core.security import (
     decode_refresh_token, create_reset_token, decode_reset_token
 )
 from app.core.config import settings
+from app.core.cache import RedisCacheService
 from app.core.email import generate_random_password, email_service
-from app.core.rate_limit import check_forgot_password_rate_limit
+from app.core.rate_limit import check_forgot_password_rate_limit, check_admin_password_reset_rate_limit
 from app.models.user import User, UserManagerMapping, AuditEventType, AuditLog
 from app.schemas.user import (
     CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate,
@@ -20,8 +23,16 @@ from app.api.v1.auth.repository_interfaces import IUserRepository
 
 
 class AuthService:
-    def __init__(self, user_repo: IUserRepository):
+    def __init__(self, user_repo: IUserRepository, cache: Optional[RedisCacheService] = None):
         self.user_repo = user_repo
+        self.cache = cache or RedisCacheService()
+
+    def _invalidate_user_caches(self, role: Optional[str]) -> None:
+        if not role:
+            return
+        self.cache.delete("v1", f"users:assignable:{role}")
+        if role.lower() == "faculty":
+            self.cache.delete("v1", "faculty:all")
 
     def authenticate(self, login_data: UserLogin, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
         user = self.user_repo.get_by_email(login_data.email)
@@ -161,7 +172,9 @@ class AuthService:
             manager_id=user_in.manager_id,
             is_active=user_in.is_active,
         )
-        return self._enrich_user(self.user_repo.create(user))
+        result = self._enrich_user(self.user_repo.create(user))
+        self._invalidate_user_caches(resolved_system_role)
+        return result
 
     def create_user_by_admin(self, user_in: AdminUserCreate, admin_user: User, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
         """Admin creates a new user with auto-generated password and sends welcome email."""
@@ -208,16 +221,20 @@ class AuthService:
                 print(f"[EMAIL] Failed to send welcome email: {e}")
                 email_sent = False
 
-        return {
+        result = {
             "user": self._enrich_user(user),
             "password": plain_password,
             "email_sent": email_sent
         }
+        self._invalidate_user_caches(resolved_system_role)
+        return result
 
     def update_user(self, user_id: UUID, user_in: UserUpdate) -> UserResponse:
         user = self.user_repo.get_by_id(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        old_role = user.role
 
         update_data = user_in.model_dump(exclude_unset=True)
 
@@ -267,6 +284,10 @@ class AuthService:
             user.hashed_password = get_password_hash(update_data["password"])
 
         self.user_repo.update(user)
+        new_role = user.role
+        self._invalidate_user_caches(old_role)
+        if new_role != old_role:
+            self._invalidate_user_caches(new_role)
         return self._enrich_user(user)
 
     def delete_user(self, user_id: UUID) -> dict:
@@ -275,7 +296,9 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         email = user.email
+        role = user.role
         self.user_repo.delete(user)
+        self._invalidate_user_caches(role)
         return {"detail": f"User '{email}' successfully deleted"}
 
     def change_my_password(self, user: User, data: ChangePasswordRequest, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
@@ -303,6 +326,27 @@ class AuthService:
         return {"detail": "Password successfully updated"}
 
     def admin_reset_user_password(self, user_id: UUID, new_password: str, admin_user: Optional[User] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
+        # Rate limit admin password resets - 5 per minute
+        if ip_address:
+            try:
+                allowed, remaining, retry_after = asyncio.run(check_admin_password_reset_rate_limit(ip_address))
+                if not allowed:
+                    self.user_repo.log_audit_event(
+                        AuditEventType.PASSWORD_RESET_ADMIN,
+                        user_id=user_id if user_id else None,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        details=f"Rate limited - {retry_after}s retry"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=f"Too many requests. Try again after {retry_after} seconds."
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"[RATE LIMIT] Error checking admin password reset rate limit: {e}")
+
         user = self.user_repo.get_by_id(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -378,13 +422,32 @@ class AuthService:
 
     def list_direct_reports(self, current_user: User) -> List[UserResponse]:
         """Active users reporting directly to the given user."""
-        return [self._enrich_user(u) for u in self.user_repo.list_direct_reports(current_user.id)]
+        cache_key = f"users:reports:{current_user.id}"
+        cached = self.cache.get("v1", cache_key)
+        if cached:
+            return [UserResponse.model_validate(item) for item in json.loads(cached)]
+
+        result = [self._enrich_user(u) for u in self.user_repo.list_direct_reports(current_user.id)]
+        self.cache.set("v1", cache_key, json.dumps([r.model_dump(mode="json") for r in result]), ttl=120)
+        return result
 
     def list_assignable_users(self, role: str, team_name: Optional[str] = None) -> List[User]:
         """Active users holding the given system role or belonging to the given team, for owner pickers."""
+        if team_name is None:
+            cache_key = f"users:assignable:{role}"
+            cached = self.cache.get("v1", cache_key)
+            if cached:
+                return [UserResponse.model_validate(item) for item in json.loads(cached)]
+
         if team_name:
-            return self.user_repo.list_by_team_name(team_name)
-        return self.user_repo.list_by_role(role)
+            result = self.user_repo.list_by_team_name(team_name)
+        else:
+            result = self.user_repo.list_by_role(role)
+
+        result = [UserResponse.model_validate(u) for u in result]
+        if team_name is None:
+            self.cache.set("v1", f"users:assignable:{role}", json.dumps([r.model_dump(mode="json") for r in result]), ttl=300)
+        return result
 
     def get_user_profile(self, user_id: UUID) -> UserResponse:
         user = self.user_repo.get_by_id(user_id)
@@ -392,13 +455,36 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         return self._enrich_user(user)
 
-    def get_organization_hierarchy(self) -> List[Dict[str, Any]]:
-        """Returns the full hierarchical tree of the organization."""
+    def get_organization_hierarchy(self, current_user: User) -> List[Dict[str, Any]]:
+        """Returns the hierarchical tree scoped to the caller's visibility.
+
+        Admin sees all; Manager sees their subtree; Coordinator sees their
+        direct chain (self + managers); Sales/Faculty see own node + manager only.
+        """
+        role = (current_user.role or "").lower()
         all_users = self.user_repo.list_active()
+
+        if role == "admin":
+            allowed_ids = {u.id for u in all_users}
+        elif role == "manager":
+            sub_ids = self.user_repo.get_all_subordinate_ids(current_user.id)
+            allowed_ids = {current_user.id} | set(sub_ids)
+        elif role == "coordinator":
+            manager_ids = set(self.user_repo.get_manager_ids_for_coordinator(current_user.id))
+            if current_user.manager_id:
+                manager_ids.add(current_user.manager_id)
+            allowed_ids = {current_user.id} | manager_ids
+        else:
+            # Sales / Faculty: own node + manager only
+            allowed_ids = {current_user.id}
+            if current_user.manager_id:
+                allowed_ids.add(current_user.manager_id)
+
+        filtered_users = [u for u in all_users if u.id in allowed_ids]
 
         # Build node dictionary
         nodes: Dict[UUID, Dict[str, Any]] = {}
-        for u in all_users:
+        for u in filtered_users:
             nodes[u.id] = {
                 "id": u.id,
                 "full_name": u.full_name,
@@ -413,7 +499,7 @@ class AuthService:
 
         # Build trees
         root_nodes = []
-        for u in all_users:
+        for u in filtered_users:
             if u.manager_id and u.manager_id in nodes:
                 nodes[u.manager_id]["direct_reports"].append(nodes[u.id])
             else:

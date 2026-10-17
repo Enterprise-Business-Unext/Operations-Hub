@@ -13,9 +13,10 @@ from app.schemas.session import (
     SessionCancelRequest, SessionRescheduleRequest,
 )
 from app.api.deps import get_current_user, require_coordinator_or_above, require_manager_or_admin
-from app.api.deps_services import get_session_service
+from app.api.deps_services import get_cache, get_session_service
 from app.api.v1.sessions.service import SessionService
 from app.api.v1.notifications.service import NotificationService
+from app.core.cache import RedisCacheService
 
 router = APIRouter()
 
@@ -81,10 +82,12 @@ def list_sessions(
 async def create_session(
     session_in: SessionCreate,
     service: SessionService = Depends(get_session_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Schedule single session endpoint."""
     result = service.create(session_in, current_user.id)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
     await NotificationService.notify_session_scheduled(
         faculty_name=result.faculty_name,
         faculty_email=None,
@@ -99,9 +102,12 @@ def update_session(
     id: UUID,
     session_in: SessionUpdate,
     service: SessionService = Depends(get_session_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
-    return service.update(id, session_in, current_user.id)
+    result = service.update(id, session_in, current_user.id)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
+    return result
 
 
 @router.post("/{id}/cancel", response_model=SessionDetailResponse)
@@ -109,9 +115,12 @@ def cancel_session(
     id: UUID,
     payload: SessionCancelRequest,
     service: SessionService = Depends(get_session_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
-    return service.cancel(id, payload.reason, current_user.id)
+    result = service.cancel(id, payload.reason, current_user.id)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
+    return result
 
 
 @router.post("/{id}/not-conducted", response_model=SessionDetailResponse)
@@ -119,9 +128,12 @@ def mark_session_not_conducted(
     id: UUID,
     payload: SessionCancelRequest,
     service: SessionService = Depends(get_session_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
-    return service.mark_not_conducted(id, payload.reason, current_user.id)
+    result = service.mark_not_conducted(id, payload.reason, current_user.id)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
+    return result
 
 
 @router.post("/{id}/reschedule", response_model=SessionDetailResponse)
@@ -129,9 +141,10 @@ def reschedule_session(
     id: UUID,
     payload: SessionRescheduleRequest,
     service: SessionService = Depends(get_session_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
-    return service.reschedule(
+    result = service.reschedule(
         id,
         payload.date_of_training,
         payload.start_time,
@@ -139,6 +152,8 @@ def reschedule_session(
         payload.reason,
         current_user.id,
     )
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
+    return result
 
 
 @router.patch("/{id}/complete")
@@ -146,10 +161,12 @@ async def complete_session_gate1(
     id: str,
     feedback_in: SessionFeedbackCreate,
     service: SessionService = Depends(get_session_service),
+    cache: RedisCacheService = Depends(get_cache),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Quality Checkpoint 1 Gate."""
     result = service.complete_gate1(id, feedback_in, current_user.id)
+    cache.delete("v1", f"analytics:dashboard:{current_user.id}")
 
     await NotificationService.notify_gate_completion(
         batch_id=str(result.get("batch_id") or id),

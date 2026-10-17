@@ -7,10 +7,23 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
+from app.core.cache import RedisCacheService
 from app.core.security import get_password_hash, create_access_token
 from app.models.user import User, UserManagerMapping, Team
 from app.models.batch import Batch, ApprovalConfiguration
 from app.main import app
+from app.api.deps_services import get_cache
+
+
+class NoOpCache:
+    """No-op cache for tests that avoids Redis connection hangs."""
+    def get(self, namespace, identifier):
+        return None
+    def set(self, namespace, identifier, value, ttl=None):
+        pass
+    def delete(self, namespace, identifier):
+        pass
+
 
 # In-memory SQLite database for fast isolated unit tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -90,6 +103,7 @@ def db_session():
     finally:
         db.close()
         Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 @pytest.fixture(scope="function")
@@ -102,6 +116,7 @@ def client(db_session):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_cache] = lambda: NoOpCache()
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

@@ -1,11 +1,14 @@
 import secrets
 import string
+import logging
 from typing import Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 import aiosmtplib
 from jinja2 import Template
+
+logger = logging.getLogger(__name__)
 
 
 def _get_settings():
@@ -252,12 +255,10 @@ class EmailService:
         subject: str,
         html_content: str,
         text_content: str,
-        password: str = None
     ) -> bool:
         """Send an email via SMTP. Returns True if successful."""
         if not self.smtp_host or not self.smtp_user or not self.smtp_password:
-            pwd_info = f" (password: {password})" if password else ""
-            print(f"[EMAIL] SMTP not configured. Would send to {to_email}: {subject}{pwd_info}")
+            logger.error("Email delivery is not configured; message was not sent")
             return False
         
         try:
@@ -273,8 +274,8 @@ class EmailService:
                 timeout=30
             )
             return True
-        except Exception as e:
-            print(f"[EMAIL] Failed to send email to {to_email}: {e}")
+        except Exception:
+            logger.exception("Email delivery failed")
             return False
 
     async def send_welcome_email(
@@ -302,7 +303,7 @@ class EmailService:
             email_from_name=self.email_from_name
         )
         
-        return await self.send_email(to_email, subject, html_content, text_content, password)
+        return await self.send_email(to_email, subject, html_content, text_content)
 
     async def send_forgot_password_email(
         self,

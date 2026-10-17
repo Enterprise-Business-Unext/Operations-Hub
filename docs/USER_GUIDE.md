@@ -29,6 +29,21 @@ headcount, commercial reference). A session is one training delivery
 appointment within that batch (date, time, topic, faculty, hours, status, and
 feedback).
 
+### System overview
+
+| Component | Responsibility |
+|---|---|
+| Web application | Next.js/React interface used to manage batches, schedules, governance, and reporting. |
+| API service | FastAPI backend applies workflow rules, permissions, validation, and calculations. |
+| Database | PostgreSQL stores users, batches, sessions, feedback, and related records. |
+| Supporting services | Redis supports backend caching/rate limiting; Docker Compose runs the application services. Nginx is the default combined entry point in the local stack. |
+| Optional integration | The Admin portal exposes FMS sync actions; verify the deployment's actual integration configuration before representing it as a live external connection. |
+
+In the default local setup, the combined entry point is
+`http://localhost:8080`; deployments may use a different URL. End users should
+use the address supplied by their administrator rather than configure services
+themselves.
+
 ## 2. Access and getting started
 
 ### Sign in

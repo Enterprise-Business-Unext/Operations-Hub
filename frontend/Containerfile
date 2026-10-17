@@ -1,13 +1,13 @@
 # Docker multi-stage build for Next.js Frontend
-FROM docker.io/library/node:20-alpine AS deps
+FROM docker.io/library/node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Builder stage
-FROM docker.io/library/node:20-alpine AS builder
+FROM docker.io/library/node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -16,13 +16,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
 # Bake the public API URL into the client bundle at build time
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+ARG NEXT_PUBLIC_API_URL=/api/v1
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 RUN npm run build
 
 # Production runner stage
-FROM docker.io/library/node:20-alpine AS runner
+FROM docker.io/library/node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

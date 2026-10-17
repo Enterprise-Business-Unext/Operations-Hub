@@ -23,7 +23,11 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_SCHEDULE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 
 async def validate_upload_file(file: UploadFile, max_size: int = MAX_UPLOAD_SIZE, allowed_extensions: set | None = None) -> bytes:
-    """Validate uploaded file size and extension, return file contents."""
+    """Validate uploaded file size and extension, return file contents.
+
+    Size is enforced via the file's underlying stream before reading content
+    into memory, so oversized uploads are rejected early.
+    """
     if allowed_extensions:
         filename = file.filename or ""
         if not any(filename.lower().endswith(ext) for ext in allowed_extensions):
@@ -31,12 +35,30 @@ async def validate_upload_file(file: UploadFile, max_size: int = MAX_UPLOAD_SIZE
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"File must be one of: {', '.join(sorted(allowed_extensions))}"
             )
-    content = await file.read()
-    if len(content) > max_size:
+    # Enforce content type alongside extension
+    if allowed_extensions and file.content_type:
+        ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
+        expected_types = {
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xls": "application/vnd.ms-excel",
+            ".csv": "text/csv",
+        }
+        expected = expected_types.get(f".{ext}")
+        if expected and file.content_type not in (expected, "application/octet-stream"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Content type {file.content_type} does not match file extension .{ext}"
+            )
+    # Check size via stream before reading into memory
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size > max_size:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File size exceeds maximum allowed size of {max_size // (1024*1024)} MB"
         )
+    content = await file.read()
     return content
 
 

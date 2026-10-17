@@ -1,9 +1,13 @@
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+import logging
+import secrets
 import time
+import uuid
 import redis.asyncio as redis
 
 from app.core.config import settings
@@ -45,11 +49,8 @@ class ErrorResponseMiddleware:
             if response_started:
                 # Cannot replace an in-flight response; let ASGI handle it.
                 raise
-            print(f"[Error] Unhandled exception on {scope.get('method')} {scope.get('path')}: {exc!r}")
-            if settings.ENVIRONMENT != "production":
-                detail = f"{type(exc).__name__}: {exc}"
-            else:
-                detail = "Internal server error"
+            logging.exception("Unhandled exception on %s %s", scope.get('method'), scope.get('path'))
+            detail = "Internal server error"
             response = JSONResponse(status_code=500, content={"detail": detail})
             await response(scope, receive, send)
 
@@ -113,8 +114,8 @@ class RedisRateLimitMiddleware(BaseHTTPMiddleware):
         if not settings.RATE_LIMIT_ENABLED:
             return await call_next(request)
 
-        # Only rate limit auth endpoints for now
-        if not request.url.path.startswith("/api/v1/auth/"):
+        # Rate limit all mutation endpoints (POST, PUT, PATCH, DELETE), including auth
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
@@ -153,6 +154,48 @@ class RedisRateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Add X-Request-ID header for distributed tracing."""
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        request.state.request_id = request_id
+        
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """CSRF protection: require X-CSRF-Token header matching csrf_token cookie on mutations."""
+
+    EXEMPT_PATHS = {"/api/v1/auth/login", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password"}
+
+    async def dispatch(self, request: Request, call_next):
+        # Only protect mutation endpoints
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+
+        # Exempt public/auth-init endpoints
+        if request.url.path in self.EXEMPT_PATHS:
+            return await call_next(request)
+
+        # Only enforce CSRF when a csrf_token cookie has been issued (i.e. user has logged in).
+        # Before login there is no cookie to match against, so no CSRF check is needed.
+        csrf_cookie = request.cookies.get("csrf_token")
+        if not csrf_cookie:
+            return await call_next(request)
+
+        csrf_header = request.headers.get("X-CSRF-Token")
+
+        if not csrf_header or csrf_cookie != csrf_header:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF token missing or mismatched"},
+            )
+
+        return await call_next(request)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Keep the schema aligned at startup; production skips optional seed data.
@@ -181,6 +224,12 @@ app.add_middleware(ErrorResponseMiddleware)
 
 # Security Headers
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Request ID Tracing
+app.add_middleware(RequestIDMiddleware)
+
+# CSRF Protection (applied before CORS)
+app.add_middleware(CSRFMiddleware)
 
 # Rate Limiting (applied before CORS)
 if settings.RATE_LIMIT_ENABLED:
@@ -227,3 +276,56 @@ def root():
 
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+class ConnectionManager:
+    """Manage WebSocket connections for real-time updates."""
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws/analytics")
+async def websocket_analytics(websocket: WebSocket):
+    """WebSocket endpoint for real-time team analytics and active batches updates."""
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Echo back heartbeat acknowledgment
+            await websocket.send_json({"type": "heartbeat", "status": "ok"})
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+async def broadcast_batch_update(batch_data: dict):
+    """Broadcast batch status updates to connected WebSocket clients."""
+    await manager.broadcast({
+        "type": "batch_update",
+        "data": batch_data
+    })
+
+
+async def broadcast_session_update(session_data: dict):
+    """Broadcast session completion updates to connected WebSocket clients."""
+    await manager.broadcast({
+        "type": "session_update",
+        "data": session_data
+    })

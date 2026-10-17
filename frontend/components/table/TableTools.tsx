@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useId, useRef, useState } from "react";
-import { Check, Columns3, Download, MoreHorizontal, RefreshCw } from "lucide-react";
+import { Check, Columns3, Copy, Download, MoreHorizontal, RefreshCw } from "lucide-react";
 import { Button, type ButtonProps } from "@/components/ui/button";
-import { downloadCsv, type CsvColumn } from "@/lib/csv";
+import { copyTsv, downloadCsv, type CsvColumn } from "@/lib/csv";
 import { cn } from "@/lib/utils";
 
 /** Every panel-level table control is `sm`, i.e. the toolbar control height. */
@@ -287,6 +287,52 @@ export function RefreshButton({
     <Button variant="outline" size="sm" className={TOOL_BUTTON} onClick={onClick} onMouseDown={(e) => e.preventDefault()} onFocus={(e) => e.preventDefault()} disabled={isLoading}>
       <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} aria-hidden="true" />
       <span>{isLoading ? "Refreshing…" : label}</span>
+    </Button>
+  );
+}
+
+/** Copies the visible rows to the clipboard as TSV so they paste into Excel one cell per column. */
+export function CopyButton<T>({
+  columns,
+  rows,
+  label = "Copy",
+  ...buttonProps
+}: {
+  columns: readonly CsvColumn<T>[];
+  rows: readonly T[];
+  label?: string;
+} & Omit<ButtonProps, "onClick" | "children">) {
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    },
+    []
+  );
+
+  const handleCopy = async () => {
+    await copyTsv(columns, rows);
+    setCopied(true);
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    copiedTimer.current = setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-9 shrink-0 gap-1.5 px-2 text-xs"
+      onClick={handleCopy}
+      onMouseDown={(e) => e.preventDefault()}
+      onFocus={(e) => e.preventDefault()}
+      disabled={rows.length === 0}
+      title={rows.length === 0 ? "Nothing to copy with the current filters" : copied ? "Copied!" : `${label} (${rows.length} rows)`}
+      {...buttonProps}
+    >
+      <Copy className="h-4 w-4" aria-hidden="true" />
+      <span>{label}</span>
     </Button>
   );
 }

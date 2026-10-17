@@ -373,7 +373,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       return "Approval 2 Pending";
     }
     if (target.approver_1_status === "Rejected" || target.approver_2_status === "Rejected") {
-      return "Requested";
+      return "Rejected";
     }
     if (target.approver_1_status === "Approved" && target.approver_2_status === "Approved") {
       return "Approved";
@@ -1499,7 +1499,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               )}
 
               {/* Rejection / Revision Notice */}
-              {activeBatch.comments && activeBatch.status === "Requested" && (
+              {activeBatch.remarks && activeBatch.status === "Rejected" && (
                 <div
                   style={{
                     background: "rgba(244, 63, 94, 0.1)",
@@ -1523,7 +1523,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     </button>
                   </div>
                   <div style={{ fontSize: "0.875rem", color: "var(--text-main)", marginTop: 8, fontWeight: 500 }}>
-                    {activeBatch.comments}
+                    {activeBatch.remarks}
                   </div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
                     Make the requested adjustments via &ldquo;Edit Batch&rdquo;. New batches are sent to approval automatically after creation.

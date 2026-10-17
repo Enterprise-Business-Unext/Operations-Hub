@@ -36,7 +36,7 @@ class GatekeeperService:
         """
         if feedback_data.rating < Decimal("1.0") or feedback_data.rating > Decimal("5.0"):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Quality Gate 1 Rejected: Rating must be between 1.0 and 5.0."
             )
 
@@ -54,7 +54,7 @@ class GatekeeperService:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not available for Gate 1 completion")
         if not session_obj.training_session_id:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="A linked training_session_id is required to complete a session",
             )
 
@@ -175,11 +175,11 @@ class GatekeeperService:
         total = promoters + passives + detractors
         if total == 0:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="NPS closure requires at least one response",
             )
 
-        batch.batch_nps = Decimal(str(round(((promoters - detractors) / total) * 100, 2)))
+        batch.batch_nps = ((promoters - detractors) * Decimal("100") / Decimal(total)).quantize(Decimal("0.01"))
         batch.nps_total_responses = total
         batch.nps_promoters = promoters
         batch.nps_passives = passives

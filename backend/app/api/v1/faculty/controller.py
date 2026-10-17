@@ -6,7 +6,7 @@ from io import StringIO
 from datetime import datetime
 
 from app.models.user import User
-from app.schemas.faculty import FacultyResponse, FacultyUtilizationOverview
+from app.schemas.faculty import FacultyResponse, FacultyPublic, FacultyUtilizationOverview
 from app.api.deps import get_current_user, require_manager_or_admin, require_coordinator_or_above
 from app.api.deps_services import get_faculty_service
 from app.api.v1.faculty.service import FacultyService
@@ -22,7 +22,11 @@ def list_faculty(
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """Faculty directory endpoint."""
-    return service.list(faculty_type, domain)
+    role = (current_user.role or "").lower()
+    faculty_list = service.list(faculty_type, domain)
+    if role in ("admin", "manager"):
+        return faculty_list
+    return [FacultyPublic.model_validate(f) for f in faculty_list]
 
 
 @router.get("/utilization", response_model=FacultyUtilizationOverview, dependencies=[Depends(require_coordinator_or_above)])
@@ -41,7 +45,7 @@ def export_faculty_utilization_csv(
     end_date: Optional[str] = None,
     all: bool = Query(False, description="Bypass RBAC scoping to view all utilization records (requires Manager or Admin)"),
     service: FacultyService = Depends(get_faculty_service),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_coordinator_or_above)
 ) -> StreamingResponse:
     """Export faculty utilization ledger as CSV."""
     if all:

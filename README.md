@@ -125,15 +125,33 @@ sequenceDiagram
 
 ### 1. Start Services
 
+Copy `.env.example` to `.env`, replace the empty secret values with unique
+generated values, and configure SMTP before starting the production-default
+stack. Generate secrets with `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+and paste each result into the corresponding `.env` field.
+
 ```powershell
+Copy-Item .env.example .env
 docker compose up -d --build
 ```
 
-The stack exposes Nginx at `http://localhost:8080`. It routes `/api/*` and
-`/health` to FastAPI and all other requests to Next.js. Redis is available to
-the backend at `redis:6379` and is persisted in the `redisdata` volume for
-caching and rate limiting. Set `REDIS_PASSWORD` in `.env` to enable Redis
-authentication.
+The stack binds Nginx to `127.0.0.1:8080` by default. It routes `/api/*` and
+`/health` to FastAPI and all other requests to Next.js. The browser uses the
+same-origin `/api/v1` path. PostgreSQL and Redis are available only on the
+private Compose network. The backend runs without a development reloader or
+source-code bind mount; the optional backend host port is loopback-bound.
+
+Set `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, and the public
+HTTPS `FRONTEND_URL` for production email delivery. Production settings reject
+missing SMTP/Redis credentials, insecure CORS origins, a development secret, or
+debug mode. `BACKEND_CORS_ORIGINS` may remain `[]` for same-origin deployments;
+otherwise set it to a JSON array containing only HTTPS origins.
+
+The bundled Nginx listener is HTTP-only and must sit behind a trusted
+TLS-terminating ingress in production. It binds to loopback by default; set
+`NGINX_BIND_ADDRESS` to an address reachable by the ingress and restrict that
+port with host/network firewall rules. Do not expose the HTTP listener directly
+to untrusted networks.
 
 ### 2. Initialize the Database Schema
 
@@ -161,6 +179,11 @@ For more details on backend configuration and migrations, see [backend/README.md
 ---
 
 ## Frontend Development & Hot Reload
+
+The repository `.env.example` targets production defaults. Before using either
+development option below, set `ENVIRONMENT=development` and `DEBUG=True` in
+`.env`. For the Docker option, `FRONTEND_DEV_API_URL` defaults to the host
+backend at `http://localhost:8000/api/v1`.
 
 The default stack above is a **production** frontend: `Containerfile` runs `next build` and the container serves a pre-compiled standalone bundle via `node server.js`. That server has no compiler, no file watcher, and no HMR socket, and the compose service mounts no source, so edits to `frontend/` are invisible until the image is rebuilt.
 
@@ -191,7 +214,7 @@ docker compose --profile dev up --build frontend-dev
 `frontend/Containerfile.dev` runs `next dev` against the working tree bind-mounted at `/app`. Two details make this reliable rather than merely functional:
 
 * **`node_modules` and `.next` are named volumes.** The host tree is Windows and contains win32-native binaries, which would otherwise shadow the container's Linux dependencies. Keeping `.next` on the container filesystem is also far faster than writing build output through the Docker Desktop mount.
-* **`WATCHPACK_POLLING` defaults to `true`.** Docker Desktop's bind-mount layer does not deliver filesystem events into the container, so without polling the watcher never fires and edits appear to save without taking effect. Next 14 watches through webpack's watchpack rather than chokidar, so this is the only knob required. On a Linux host, or when running the dev server natively, set `FRONTEND_WATCH_POLLING=false` in `.env` to drop the polling CPU cost.
+* **`WATCHPACK_POLLING` defaults to `true`.** Docker Desktop's bind-mount layer does not deliver filesystem events into the container, so without polling the watcher never fires and edits appear to save without taking effect. Next.js watches through webpack's watchpack rather than chokidar, so this is the only knob required. On a Linux host, or when running the dev server natively, set `FRONTEND_WATCH_POLLING=false` in `.env` to drop the polling CPU cost.
 
 `frontend-dev` shares host port 3000 with the production `frontend` service and lives behind the `dev` profile, so `docker compose up` is unaffected. Start only one of them, or point the dev server elsewhere:
 

@@ -64,6 +64,12 @@ Object.defineProperty(window, "localStorage", {
   value: createLocalStorageMock(),
 });
 
+Object.defineProperty(navigator, "clipboard", {
+  writable: true,
+  configurable: true,
+  value: { writeText: vi.fn(), readText: vi.fn() },
+});
+
 Object.defineProperty(document, "cookie", {
   writable: true,
   value: "",
