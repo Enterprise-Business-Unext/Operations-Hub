@@ -136,3 +136,48 @@ describe("All Batches visibility", () => {
     expect(screen.queryByRole("button", { name: "All Batches" })).toBeNull();
   });
 });
+
+describe("Top-level manager tabs", () => {
+  beforeEach(() => {
+    logout.mockClear();
+    setLocationSearch("");
+    mockUser.team_name = "Delivery";
+    mockUser.is_configured_approver = false;
+    mockUser.role = "manager";
+    mockUser.manager_id = undefined;
+    mockUser.is_manager = true;
+    mockUser.direct_reports_count = 1;
+  });
+
+  it("shows every tab except the Approval Queue", () => {
+    render(<Sidebar activeView="active_batches" setActiveView={() => {}} />);
+
+    expect(screen.getByRole("button", { name: "All Batches" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "My Batches" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Active Batches" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manager Board" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Faculty Utilization" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Team Analytics" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approval Queue" })).toBeNull();
+  });
+
+  it("hides All Batches and the Approval Queue when the manager has a manager above and is not an approver", () => {
+    mockUser.manager_id = "mgr-above";
+    mockUser.is_configured_approver = false;
+
+    render(<Sidebar activeView="active_batches" setActiveView={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: "All Batches" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approval Queue" })).toBeNull();
+  });
+
+  it("shows All Batches and the Approval Queue for a non-top-level manager who is a configured approver", () => {
+    mockUser.manager_id = "mgr-above";
+    mockUser.is_configured_approver = true;
+
+    render(<Sidebar activeView="active_batches" setActiveView={() => {}} />);
+
+    expect(screen.getByRole("button", { name: "All Batches" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approval Queue" })).toBeInTheDocument();
+  });
+});

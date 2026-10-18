@@ -307,6 +307,14 @@ export default function DashboardPage() {
   const [myBatchesPage, setMyBatchesPage] = useState(1);
   const [myBatchesPageSize, setMyBatchesPageSize] = useState(10);
 
+  // Team batches state for managers: server-scoped to primary_manager == me
+  // or coordinator is a subordinate, same as the manager board RBAC scope.
+  const [teamBatches, setTeamBatches] = useState<Batch[]>([]);
+  const [isLoadingTeamBatches, setIsLoadingTeamBatches] = useState(false);
+  const [teamBatchesError, setTeamBatchesError] = useState<string | null>(null);
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamPageSize, setTeamPageSize] = useState(10);
+
   // Direct reports state for managerial dashboard
   const [myReports, setMyReports] = useState<User[]>([]);
 
@@ -427,6 +435,23 @@ export default function DashboardPage() {
       setMyBatchesError(err?.message || "Failed to load your batches");
     } finally {
       setIsLoadingMyBatches(false);
+    }
+  };
+
+  // Fetch batches in the manager's team scope (primary manager == me, or
+  // coordinator is a subordinate). Server-side RBAC scopes the result, so no
+  // `mine` flag is passed.
+  const fetchTeamBatches = async () => {
+    setIsLoadingTeamBatches(true);
+    setTeamBatchesError(null);
+    try {
+      const data = await api.getBatches();
+      setTeamBatches(data);
+    } catch (err: any) {
+      console.error("Failed to load team batches:", err);
+      setTeamBatchesError(err?.message || "Failed to load your team's batches");
+    } finally {
+      setIsLoadingTeamBatches(false);
     }
   };
 
@@ -567,9 +592,9 @@ export default function DashboardPage() {
     setIsLoadingFaculty(true);
     setFacultyError(null);
     try {
-      const isManagerOrAdmin = user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin";
+      const isAdmin = user?.role?.toLowerCase() === "admin";
       const isFinance = user?.team_name?.trim().toLowerCase() === "finance";
-      const shouldSeeAll = isManagerOrAdmin || isFinance;
+      const shouldSeeAll = isAdmin || isFinance;
       const ledger = await api.getSessions({ all: shouldSeeAll });
       setFacultyUtilizationLedger(ledger ?? []);
     } catch (err: any) {
@@ -590,6 +615,9 @@ export default function DashboardPage() {
 
       if (activeView === "my_batches") {
         fetchMyBatches();
+        if (user?.role?.toLowerCase() === "manager") {
+          fetchTeamBatches();
+        }
       } else if (activeView === "active_batches") {
         fetchActiveBatches(activeFilterDate);
       } else if (activeView === "manager_board") {
@@ -926,9 +954,15 @@ export default function DashboardPage() {
         {activeView === "my_batches" && (
           <MyBatchesView
             data={myBatches}
-            isLoading={isLoadingMyBatches}
-            error={myBatchesError}
-            onRefresh={fetchMyBatches}
+            teamData={teamBatches}
+            isLoading={isLoadingMyBatches || isLoadingTeamBatches}
+            error={myBatchesError || teamBatchesError}
+            onRefresh={() => {
+              fetchMyBatches();
+              if (user?.role?.toLowerCase() === "manager") {
+                fetchTeamBatches();
+              }
+            }}
             onOpenBatchDetail={(batch) => openBatchDetail(batch, "sessions")}
             canCreateBatch={canCreateBatch}
             onCreateBatch={() => setIsCreateOpen(true)}

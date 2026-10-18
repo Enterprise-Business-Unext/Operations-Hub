@@ -241,3 +241,108 @@ describe("MyBatchesView filters", () => {
     expect(onPageChange).toHaveBeenCalledWith(1);
   });
 });
+
+describe("MyBatchesView team table", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+  });
+
+  const alpha = makeBatch({
+    id: "b-alpha",
+    batch_id: "ALPHA_001",
+    client_name: "Acme Corp",
+    status: "Approved",
+  });
+  const beta = makeBatch({
+    id: "b-beta",
+    batch_id: "BETA_001",
+    client_name: "Globex",
+    status: "Ongoing",
+  });
+
+  it("renders the team table with its own title and rows", () => {
+    renderView({ teamData: [alpha, beta] });
+
+    expect(screen.getByText("Batches Assigned To The Team")).toBeTruthy();
+    expect(screen.getByText("ALPHA_001")).toBeTruthy();
+    expect(screen.getByText("BETA_001")).toBeTruthy();
+  });
+
+  it("does not render the team table when teamData is not provided", () => {
+    renderView({ data: [alpha] });
+
+    expect(screen.queryByText("Batches Assigned To The Team")).toBeNull();
+  });
+
+  it("shows the team empty state when the team has no batches", () => {
+    renderView({ teamData: [] });
+
+    expect(screen.getByText("No batches assigned to your team yet")).toBeTruthy();
+  });
+
+  it("narrows team rows by client", async () => {
+    const user = userEvent.setup();
+    renderView({ teamData: [alpha, beta] });
+
+    await user.click(screen.getAllByRole("button", { name: "Filters" })[1]);
+    // The second Filters toggle belongs to the team table; its panel is the only
+    // one open, so its "Client" select is the only one in the DOM.
+    await user.selectOptions(screen.getByLabelText("Client"), "Globex");
+
+    expect(screen.getByText("BETA_001")).toBeTruthy();
+    expect(screen.queryByText("ALPHA_001")).toBeNull();
+  });
+
+  it("returns to page 1 when the team filter changes", async () => {
+    const user = userEvent.setup();
+    renderView({ teamData: [alpha, beta] });
+
+    await user.click(screen.getAllByRole("button", { name: "Filters" })[1]);
+    await user.selectOptions(screen.getByLabelText("Client"), "Globex");
+
+    expect(screen.getByText("BETA_001")).toBeTruthy();
+    expect(screen.queryByText("ALPHA_001")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Clear/i }));
+    expect(screen.getByText("ALPHA_001")).toBeTruthy();
+    expect(screen.getByText("BETA_001")).toBeTruthy();
+  });
+
+  it("re-renders the team table when teamData changes", () => {
+    const onOpenBatchDetail = vi.fn();
+    const onPageChange = vi.fn();
+    const onPageSizeChange = vi.fn();
+    const { rerender } = render(
+      <MyBatchesView
+        data={[]}
+        teamData={[alpha]}
+        isLoading={false}
+        error={null}
+        onOpenBatchDetail={onOpenBatchDetail}
+        page={1}
+        pageSize={10}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    );
+    expect(screen.getByText("ALPHA_001")).toBeTruthy();
+    expect(screen.queryByText("BETA_001")).toBeNull();
+
+    rerender(
+      <MyBatchesView
+        data={[]}
+        teamData={[beta]}
+        isLoading={false}
+        error={null}
+        onOpenBatchDetail={onOpenBatchDetail}
+        page={1}
+        pageSize={10}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    );
+    expect(screen.getByText("BETA_001")).toBeTruthy();
+    expect(screen.queryByText("ALPHA_001")).toBeNull();
+  });
+});

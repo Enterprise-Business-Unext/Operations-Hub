@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Layers, CalendarClock, CalendarX2, Clock, Search, UserPlus, Star, TrendingUp } from "lucide-react";
 import { Batch } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
@@ -45,6 +45,7 @@ import type { CsvColumn } from "@/lib/csv";
 
 interface MyBatchesViewProps {
   data: Batch[];
+  teamData?: Batch[];
   isLoading: boolean;
   error?: string | null;
   onRefresh?: () => void;
@@ -306,6 +307,7 @@ function BatchRow({
 
 export function MyBatchesView({
   data,
+  teamData,
   isLoading,
   error,
   onRefresh,
@@ -318,6 +320,7 @@ export function MyBatchesView({
   onPageSizeChange,
 }: MyBatchesViewProps) {
   const batches = useMemo(() => data ?? [], [data]);
+  const teamBatches = useMemo(() => teamData ?? [], [teamData]);
 
   const { sortKey, sortDir, sortedRows, toggleSort, applySort, sortVersion } = useTableSort(batches, BATCH_ACCESSORS, {
     descFirstKeys: ["startDate", "endDate"],
@@ -348,6 +351,51 @@ export function MyBatchesView({
 
   const start = (page - 1) * pageSize;
   const pagedBatches = useMemo(() => filteredRows.slice(start, start + pageSize), [filteredRows, start, pageSize]);
+
+  // Local pagination for the manager's team table, independent of the "you"
+  // table above. Resets to page 1 whenever the team data or its sort/filters change.
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamPageSize, setTeamPageSize] = useState(10);
+
+  const {
+    sortKey: teamSortKey,
+    sortDir: teamSortDir,
+    sortedRows: teamSortedRows,
+    toggleSort: toggleTeamSort,
+    applySort: applyTeamSort,
+    sortVersion: teamSortVersion,
+  } = useTableSort(teamBatches, BATCH_ACCESSORS, {
+    descFirstKeys: ["startDate", "endDate"],
+  });
+
+  const {
+    search: teamSearch,
+    setSearch: setTeamSearch,
+    setFilter: setTeamFilter,
+    getFilter: getTeamFilter,
+    optionsFor: teamOptionsFor,
+    clearFilters: clearTeamFilters,
+    hasActiveFilters: teamHasActiveFilters,
+    activeFilterCount: teamActiveFilterCount,
+    filteredRows: teamFilteredRows,
+    filtersVersion: teamFiltersVersion,
+  } = useTableFilters(teamSortedRows, BATCH_FILTER_FIELDS, BATCH_SEARCH_ACCESSOR);
+
+  const teamColumns = useColumnVisibility<ColumnKey>({
+    columns: COLUMN_KEYS,
+    storageKey: "ops.table.team-batches.columns",
+    defaultHidden: ["feedback", "nps"],
+  });
+
+  useEffect(() => {
+    setTeamPage(1);
+  }, [teamFiltersVersion, teamSortVersion, teamData]);
+
+  const teamStart = (teamPage - 1) * teamPageSize;
+  const pagedTeamBatches = useMemo(
+    () => teamFilteredRows.slice(teamStart, teamStart + teamPageSize),
+    [teamFilteredRows, teamStart, teamPageSize]
+  );
 
   const unscheduledCount = useMemo(
     () => batches.filter((batch) => (batch.scheduled_session_count ?? 0) === 0).length,
@@ -577,6 +625,171 @@ export function MyBatchesView({
           </tbody>
         </table>
       </FullscreenTable>
+
+      {teamData && (
+        <FullscreenTable
+          stickyHeader
+          stickyTop={NAVBAR_HEIGHT}
+          title={
+            <PanelTitle
+              title="Batches Assigned To The Team"
+              description="Batches owned by you or by a coordinator reporting to you."
+              meta={
+                <CountBadge
+                  value={`${teamFilteredRows.length} of ${teamBatches.length}`}
+                  label={teamFilteredRows.length === teamBatches.length ? "batches" : "batches match"}
+                />
+              }
+            />
+          }
+          toolbar={
+            <TableFilters
+              search={{
+                value: teamSearch,
+                onChange: setTeamSearch,
+                placeholder: "Search team batches by ID, program, client...",
+                width: 280,
+              }}
+              selects={[
+                {
+                  key: "status",
+                  label: "Status",
+                  value: getTeamFilter("status"),
+                  onChange: (value) => setTeamFilter("status", value),
+                  options: teamOptionsFor("status"),
+                  allLabel: "All statuses",
+                  width: 150,
+                },
+                {
+                  key: "category",
+                  label: "Category",
+                  value: getTeamFilter("category"),
+                  onChange: (value) => setTeamFilter("category", value),
+                  options: teamOptionsFor("category"),
+                  allLabel: "All categories",
+                  width: 150,
+                },
+                {
+                  key: "deliveryMode",
+                  label: "Delivery Mode",
+                  value: getTeamFilter("deliveryMode"),
+                  onChange: (value) => setTeamFilter("deliveryMode", value),
+                  options: teamOptionsFor("deliveryMode"),
+                  allLabel: "All delivery modes",
+                  width: 160,
+                },
+                {
+                  key: "client",
+                  label: "Client",
+                  value: getTeamFilter("client"),
+                  onChange: (value) => setTeamFilter("client", value),
+                  options: teamOptionsFor("client"),
+                  allLabel: "All clients",
+                  width: 170,
+                },
+              ]}
+              sort={{
+                options: BATCH_SORT_OPTIONS,
+                sortKey: teamSortKey,
+                sortDir: teamSortDir,
+                onChange: applyTeamSort,
+              }}
+              onClear={clearTeamFilters}
+              hasActiveFilters={teamHasActiveFilters}
+              activeFilterCount={teamActiveFilterCount}
+            />
+          }
+          actions={
+            <>
+              <ColumnsMenu
+                columns={COLUMN_KEYS}
+                hidden={teamColumns.hidden}
+                onToggle={teamColumns.toggle}
+                onShowAll={teamColumns.showAll}
+              />
+              <ExportButton filename="team-batches" columns={EXPORT_COLUMNS} rows={teamFilteredRows} />
+              <CopyButton columns={EXPORT_COLUMNS} rows={teamFilteredRows} />
+              {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
+            </>
+          }
+          footer={
+            <PaginationControls
+              label="Team batches pages"
+              currentPage={teamPage}
+              totalItems={teamFilteredRows.length}
+              pageSize={teamPageSize}
+              pageSizeOptions={[10, 25, 50, 100]}
+              onPageChange={setTeamPage}
+              onPageSizeChange={(newSize) => {
+                setTeamPageSize(newSize);
+                setTeamPage(1);
+              }}
+            />
+          }
+        >
+          <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1180 }}>
+            <TableCaption>Batches assigned to your team, with schedule status</TableCaption>
+            <thead>
+              <tr>
+                {BATCH_COLUMN_DEFS.map((column) =>
+                  teamColumns.isVisible(column.key as ColumnKey) ? (
+                    <SortableHeaderCell
+                      key={column.key}
+                      columnKey={column.key}
+                      label={column.label}
+                      style={{ ...HEAD_STYLE, textAlign: column.align ?? "left" }}
+                      sortKey={teamSortKey}
+                      sortDir={teamSortDir}
+                      onSort={toggleTeamSort}
+                    />
+                  ) : null
+                )}
+                {teamColumns.isVisible("action") && (
+                  <PlainHeaderCell style={{ ...HEAD_STYLE, textAlign: "right", ...ACTIONS_COLUMN_STYLE }}>
+                    Action
+                  </PlainHeaderCell>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {error ? (
+                <TableStateRow colSpan={teamColumns.isVisible("action") ? BATCH_COLUMN_DEFS.length + 1 : BATCH_COLUMN_DEFS.length}>
+                  <ErrorBanner message={error} className="mx-auto my-6 max-w-lg" />
+                </TableStateRow>
+              ) : isLoading && teamFilteredRows.length === 0 ? (
+                <TableStateRow colSpan={teamColumns.isVisible("action") ? BATCH_COLUMN_DEFS.length + 1 : BATCH_COLUMN_DEFS.length}>
+                  <LoadingState label="Loading your team's batches..." />
+                </TableStateRow>
+              ) : pagedTeamBatches.length === 0 ? (
+                <TableStateRow colSpan={teamColumns.isVisible("action") ? BATCH_COLUMN_DEFS.length + 1 : BATCH_COLUMN_DEFS.length}>
+                  {teamHasActiveFilters ? (
+                    <EmptyState
+                      icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                      title="No team batches match your filters"
+                      description="Clear the search or filter selections to see all your team's batches."
+                      action={
+                        <Button size="sm" variant="outline" onClick={clearTeamFilters}>
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={<Layers className="h-5 w-5" aria-hidden="true" />}
+                      title="No batches assigned to your team yet"
+                      description="Your team's batches will appear here."
+                    />
+                  )}
+                </TableStateRow>
+              ) : (
+                pagedTeamBatches.map((batch) => (
+                  <BatchRow key={batch.id} batch={batch} columns={teamColumns} onOpenBatchDetail={onOpenBatchDetail} />
+                ))
+              )}
+            </tbody>
+          </table>
+        </FullscreenTable>
+      )}
     </div>
   );
 }

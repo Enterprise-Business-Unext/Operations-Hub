@@ -1,4 +1,0 @@
-Contact: security@enterprise-ops.com
-Encryption: https://enterprise-ops.com/security/pgp-key.asc
-Acknowledgment: https://enterprise-ops.com/security/hall-of-fame
-Policy: https://enterprise-ops.com/security/policy

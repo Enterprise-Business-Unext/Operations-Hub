@@ -188,6 +188,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isApprover = user?.is_configured_approver === true;
   const canCreateBatch = !isAdmin && user?.team_name?.trim().toLowerCase() === "delivery";
   const isManager = (user?.direct_reports_count ?? 0) > 0 || user?.is_manager || user?.role?.toLowerCase() === "manager" || isAdmin;
+  // A top-level manager has no manager above them, so they get every tab
+  // except the Approval Queue. Configured approvers who report to someone else
+  // keep the Approval tab instead.
+  const isTopLevelManager = user?.role?.toLowerCase() === "manager" && !user?.manager_id;
   const canSeeManagerBoard = !isFinance && isManager;
   const canSeeAnalytics = !isFinance && isManager;
   // My Batches is the landing view for Delivery staff, which is exactly the
@@ -195,8 +199,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const canSeeMyBatches = !isFinance && !isAdmin;
   // All Batches is the every-batch sheet. It is not Finance-exclusive any more:
   // the configured approvers (approver 1 and approver 2) work from the same
-  // rows, so they get the sheet too, alongside the Finance team.
-  const canSeeAllBatches = isFinance || isApprover;
+  // rows, so they get the sheet too, alongside the Finance team. A top-level
+  // manager also sees it (every tab except Approval).
+  const canSeeAllBatches = isFinance || isApprover || isTopLevelManager;
 
   // `Ctrl+3` is deliberately ambiguous: it lands on whichever queue this role is
   // expected to work from, so it can never point at a view the user cannot open.
@@ -234,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Layers,
       badge: null,
     },
-    ...(isApprover ? [{
+    ...(isApprover && !isTopLevelManager ? [{
       id: "approvals" as const,
       label: "Approval Queue",
       icon: Check,
