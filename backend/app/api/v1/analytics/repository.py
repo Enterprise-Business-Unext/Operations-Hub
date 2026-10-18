@@ -147,3 +147,6 @@ class AnalyticsRepository(IAnalyticsRepository):
         if manager_ids is not None:
             query = query.filter(User.manager_id.in_(list(manager_ids)))
         return query.count()
+
+    def count_schedule_not_updated(self, batch_ids: Optional[Sequence[UUID]]) -> int:
+        return self._batches(batch_ids).filter(Batch.schedule_complete == False).count()

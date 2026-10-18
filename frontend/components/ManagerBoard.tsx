@@ -373,12 +373,8 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
   // Quick statistics calculated on the fly
   const quickStats = useMemo(() => {
-    const l2Count = batches.filter((b) => b.status === "Approval 2 Pending").length;
     const activeCount = batches.filter((b) => ["Approved", "Upcoming", "Ongoing"].includes(b.status)).length;
-    const overdueCount = batches.filter((b) => {
-      return b.status.includes("Pending") && daysPendingRequest(b) >= 3;
-    }).length;
-    return { l2Count, activeCount, overdueCount };
+    return { activeCount };
   }, [batches]);
 
   // Personnel ledger rows: the same six fields the table renders, pre-flattened
@@ -588,18 +584,15 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
             </div>
           </div>
 
-          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid var(--color-destructive)" }}>
+          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: `4px solid ${shade("var(--color-warning)")}` }}>
             <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Urgent Manager Action
+              Schedules Not Updated
             </div>
-            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--color-destructive)", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-              {quickStats.l2Count + quickStats.overdueCount}
-              {(quickStats.l2Count + quickStats.overdueCount > 0) && (
-                <Flame size={20} color="var(--color-destructive)" aria-hidden="true" />
-              )}
+            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: shade("var(--color-warning)"), marginTop: 4 }}>
+              {summary?.schedule_not_updated_count ?? 0}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-              {quickStats.l2Count} L2 Sign-offs • {quickStats.overdueCount} Overdue
+              Batches pending schedule confirmation
             </div>
           </div>
         </div>

@@ -1,7 +1,16 @@
 /**
  * Global Date Formatting Utility for Enterprise Operations Platform.
  * Enforces strict DD-MM-YYYY format across all views, tables, modals, and drawers.
+ * All displayed datetimes are rendered in IST (UTC+5:30, +330 min offset).
  */
+
+const IST_OFFSET_MINUTES = 330;
+
+function toIST(dateValue: string | Date): Date {
+  const d = typeof dateValue === "string" ? new Date(dateValue) : new Date(dateValue.getTime());
+  if (isNaN(d.getTime())) return d;
+  return new Date(d.getTime() + IST_OFFSET_MINUTES * 60000);
+}
 
 export function formatDate(
   dateValue?: string | Date | null,
@@ -47,7 +56,7 @@ export function formatDate(
     }
   }
 
-  const d = new Date(dateValue);
+  const d = toIST(dateValue as Date);
   if (isNaN(d.getTime())) {
     return typeof dateValue === "string" ? dateValue : fallback;
   }
@@ -64,7 +73,7 @@ export function formatDateTime(
   fallback: string = "—"
 ): string {
   if (!dateValue) return fallback;
-  const d = new Date(dateValue);
+  const d = toIST(dateValue as Date);
   if (isNaN(d.getTime())) return formatDate(dateValue, fallback);
 
   const datePart = formatDate(d, fallback);

@@ -90,3 +90,8 @@ class IAnalyticsRepository(ABC):
     @abstractmethod
     def count_active_faculty(self, manager_ids: Optional[Sequence[UUID]] = None) -> int:
         pass
+
+    @abstractmethod
+    def count_schedule_not_updated(self, batch_ids: Optional[Sequence[UUID]]) -> int:
+        """Count batches whose schedule has not been marked complete."""
+        pass

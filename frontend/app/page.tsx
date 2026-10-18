@@ -1680,6 +1680,7 @@ export default function DashboardPage() {
             currentUser={user}
             dashboardSummary={dashboardSummary}
             isLoading={isLoadingAnalytics}
+            facultyUtilizationLedger={facultyUtilizationLedger}
           />
         )}
 

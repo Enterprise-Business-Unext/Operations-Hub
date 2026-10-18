@@ -7,14 +7,15 @@ import {
   RefreshCw, Shield, PieChart, MapPin, Search, Layers,
   BarChart2, LineChart
 } from "lucide-react";
-import { Batch, User, ManagerDashboardSummary } from "@/lib/api";
-import { formatDate } from "@/lib/dateUtils";
+import { Batch, User, ManagerDashboardSummary, TrainingSession } from "@/lib/api";
+import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { PaginationControls } from "./PaginationControls";
 import {
   ColumnsMenu,
   ExportButton,
   FullscreenTable,
   PlainHeaderCell,
+  RefreshButton,
   SortableHeaderCell,
   TableCaption,
   TableFilters,
@@ -49,6 +50,7 @@ interface EnterpriseDashboardProps {
   dashboardSummary: ManagerDashboardSummary | null;
   isLoading: boolean;
   currentUser?: User | null;
+  facultyUtilizationLedger?: TrainingSession[];
 }
 
 type TimePeriod = "daily" | "weekly" | "monthly" | "quarterly" | "all";
@@ -65,6 +67,12 @@ function parseBatchDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
   const d = new Date(dateStr);
   return isNaN(d.getTime()) ? null : d;
+}
+
+/** Today's date in IST (UTC+5:30) as YYYY-MM-DD, for filtering sessions by training date. */
+function istTodayIso(): string {
+  const d = new Date(Date.now() + 330 * 60000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function computePeriodRange(period: TimePeriod): { from: Date; to: Date } {
@@ -1062,7 +1070,7 @@ const ACTIVITY_FEED_CSV: readonly CsvColumn<Batch>[] = [
 const PLOTTED_QUALITY_LIMIT = 12;
 const PLOTTED_TECH_LIMIT = 10;
 
-export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoading, currentUser }: EnterpriseDashboardProps) {
+export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoading, currentUser, facultyUtilizationLedger }: EnterpriseDashboardProps) {
   const [period, setPeriod] = useState<TimePeriod>("monthly");
   const [workloadTab, setWorkloadTab] = useState<"managers" | "coordinators">("managers");
   const [teamAnalyticsTab, setTeamAnalyticsTab] = useState<"comparison" | "composition" | "quality">("comparison");
@@ -1308,8 +1316,34 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     return Object.entries(map);
   }, [activeBatchesDataset]);
 
-  // ── TABLE PIPELINES (raw rows → sorted → filtered → paginated) ────────────────
+  // Coordinator sessions scheduled for today (IST) — join ledger → batches → users
+  const sessionsToday = useMemo(() => {
+    const today = istTodayIso();
+    const batchById = new Map<string, Batch>();
+    batches.forEach((b) => batchById.set(b.id, b));
+    const userById = new Map<string, User>();
+    users.forEach((u) => userById.set(u.id, u));
 
+    return (facultyUtilizationLedger ?? [])
+      .filter((s) => s.date_of_training === today)
+      .map((s) => {
+        const batch = batchById.get(s.batch_id);
+        const coordinatorId = batch?.coordinator_id ?? s.coordinator_id;
+        const coordinator = coordinatorId ? userById.get(coordinatorId) : null;
+        return {
+          sessionId: s.id,
+          batchId: s.batch_id,
+          program: s.program ?? batch?.program_name ?? "—",
+          coordinator: coordinator?.full_name ?? s.coordinator_name ?? "—",
+          faculty: s.faculty_name,
+          topic: s.topic,
+          time: s.start_time ? `${s.start_time}${s.end_time ? ` – ${s.end_time}` : ""}` : "—",
+          status: s.status,
+        };
+      });
+  }, [facultyUtilizationLedger, batches, users]);
+
+  // ── TABLE PIPELINES (raw rows → sorted → filtered → paginated) ────────────────
   const managerSort = useTableSort(managerWorkload, MANAGER_LEDGER_SORT_ACCESSORS, {
     initialKey: "active",
     initialDir: "desc",
@@ -1710,6 +1744,56 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
         <KpiCard label="On Hold" value={onHoldBatches} sub="Action required" color="#d97706" icon={Shield} />
         <KpiCard label="Cancellations" value={cancelledBatches} sub={`${cancellationRate}% cancellation rate`} color="var(--color-destructive)" icon={TrendingDown} />
       </div>
+
+      {/* Coordinator Sessions Today */}
+      {sessionsToday.length > 0 && (
+        <FullscreenTable
+          stickyHeader
+          stickyTop={NAVBAR_HEIGHT}
+          title={
+            <PanelTitle
+              title="Coordinator Sessions Today"
+              description="Training sessions scheduled for today (IST), scoped to your reporting hierarchy."
+              meta={
+                <CountBadge value={sessionsToday.length} label="sessions today" />
+              }
+            />
+          }
+          actions={
+            <>
+              <RefreshButton onClick={() => {}} isLoading={false} label="Refresh" />
+            </>
+          }
+        >
+          <table className="glass-table table-pin-first-col w-full border-collapse">
+            <TableCaption>Coordinator-led training sessions scheduled for today (IST)</TableCaption>
+            <thead>
+              <tr>
+                <th style={PORTFOLIO_TH_STYLE}>Batch</th>
+                <th style={PORTFOLIO_TH_STYLE}>Program</th>
+                <th style={PORTFOLIO_TH_STYLE}>Coordinator</th>
+                <th style={PORTFOLIO_TH_STYLE}>Faculty</th>
+                <th style={PORTFOLIO_TH_STYLE}>Topic</th>
+                <th style={PORTFOLIO_TH_STYLE}>Time</th>
+                <th style={PORTFOLIO_TH_STYLE}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessionsToday.map((s) => (
+                <tr key={s.sessionId} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.82rem" }}>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE, fontWeight: 700, color: "var(--color-primary)", whiteSpace: "nowrap" }}>{s.batchId}</td>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE, whiteSpace: "nowrap" }}>{s.program}</td>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE, color: "var(--text-muted)" }}>{s.coordinator}</td>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE }}>{s.faculty}</td>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{s.topic}</td>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE, textAlign: "center" }}>{s.time}</td>
+                  <td style={{ ...PORTFOLIO_CELL_STYLE, textAlign: "center" }}><StatusBadge status={s.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </FullscreenTable>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {/* TEAM ANALYTICS — 5 rich visualizations derived from the DB schema  */}

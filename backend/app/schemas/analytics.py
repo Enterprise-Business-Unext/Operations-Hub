@@ -26,4 +26,5 @@ class ManagerDashboardSummary(BaseModel):
     faculty_utilization_ratio: Decimal  # Internal vs External
     pending_gate1_feedbacks: int
     pending_gate2_closures: int
+    schedule_not_updated_count: int
     vertical_distribution: List[VerticalBreakdown] = []

@@ -81,6 +81,9 @@ class AnalyticsService:
         # Pending Gate 1 Feedbacks (sessions completed or past date without rating)
         pending_gate1 = self.analytics_repo.count_pending_gate1(scoped_ids, datetime.now(timezone.utc))
 
+        # Schedule not updated count: batches where schedule_complete is False
+        schedule_not_updated = self.analytics_repo.count_schedule_not_updated(scoped_ids)
+
         # Faculty utilization ratio: deployed faculty / total faculty count within the manager's hierarchy scope
         if scoped_ids is not None:
             scope_user_ids = [current_user.id]
@@ -125,6 +128,7 @@ class AnalyticsService:
             faculty_utilization_ratio=util_ratio,
             pending_gate1_feedbacks=pending_gate1,
             pending_gate2_closures=pending_gate2,
+            schedule_not_updated_count=schedule_not_updated,
             vertical_distribution=verticals,
         )
 

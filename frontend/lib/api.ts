@@ -470,6 +470,7 @@ export interface ManagerDashboardSummary {
   faculty_utilization_ratio: number;
   pending_gate1_feedbacks: number;
   pending_gate2_closures: number;
+  schedule_not_updated_count: number;
   vertical_distribution: VerticalBreakdown[];
 }
 
