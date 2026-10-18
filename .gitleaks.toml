@@ -1,30 +1,11 @@
-[[rules]]
-  id = "smtp-gmail-pattern"
-  description = "SMTP/Gmail app password patterns"
-  regex = '(?i)(smtp|gmail)[_.-]?(password|pass|pwd|secret|key|token)'
-  allowlist = [
-    'test_*',
-    '*_test.py',
-    'fixtures/*',
-  ]
+title = "Ops Gitleaks configuration"
+
+[extend]
+useDefault = true
 
 [[rules]]
-  id = "generic-secret"
-  description = "Generic secret key patterns"
-  regex = '(?i)(secret|api[_-]?key|private[_-]?key|access[_-]?token)[_.-]?(key|token|secret)?'
-  allowlist = [
-    'test_*',
-    '*_test.py',
-    'fixtures/*',
-    'SECRET_KEY=your-secret-key-here-min-32-chars',
-  ]
-
-[paths]
-  exclude = [
-    'backend/tests/',
-    'frontend/components/__tests__/',
-    '.git/',
-    'node_modules/',
-    '__pycache__/',
-    '.pytest_cache/',
-  ]
+id = "smtp-credential"
+description = "SMTP or Gmail password and token assignments"
+regex = '''(?i)(?:smtp|gmail)[_.-]?(?:password|pass|pwd|secret|key|token)\s*[:=]\s*["']?([^\s"']{8,})'''
+secretGroup = 1
+keywords = ["smtp", "gmail"]
