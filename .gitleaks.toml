@@ -1,4 +1,4 @@
-[rules]
+[[rules]]
   id = "smtp-gmail-pattern"
   description = "SMTP/Gmail app password patterns"
   regex = '(?i)(smtp|gmail)[_.-]?(password|pass|pwd|secret|key|token)'
