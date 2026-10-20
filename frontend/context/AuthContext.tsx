@@ -58,9 +58,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [storeSession]);
 
-  // Keep the API client's in-client refresh and this context in sync. Without
-  // this, a silent refresh inside `api` updated localStorage while the context
-  // kept serving stale tokens.
+  // Keep the API client's in-client refresh and this context in sync so the
+  // profile stays current after the HttpOnly cookies are rotated.
   useEffect(() => {
     api.setTokenRefreshListener((tokens) => {
       storeSession(tokens);

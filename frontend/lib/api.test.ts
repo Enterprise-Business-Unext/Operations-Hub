@@ -113,41 +113,47 @@ describe("ApiService auth token handling", () => {
     localStorage.clear();
   });
 
-  it("attaches the stored bearer token to requests", async () => {
+  it("ignores legacy localStorage tokens and uses cookies", async () => {
     localStorage.setItem("auth_token", "test-access-token");
+    localStorage.setItem("refresh_token", "test-refresh-token");
     let seen: string | null = null;
+    let credentials: RequestCredentials | undefined;
 
     server.use(
       http.get("*/api/v1/batches", ({ request }) => {
         seen = request.headers.get("Authorization");
+        credentials = request.credentials;
         return HttpResponse.json([]);
       })
     );
 
     await api.getBatches();
 
-    expect(seen).toBe("Bearer test-access-token");
+    expect(seen).toBeNull();
+    expect(credentials).toBe("include");
+    expect(localStorage.getItem("auth_token")).toBe("test-access-token");
+    expect(localStorage.getItem("refresh_token")).toBe("test-refresh-token");
   });
 
-  it("refreshes once on 401 and retries the original request", async () => {
+  it("refreshes once from cookies on 401 and retries the original request", async () => {
     localStorage.setItem("auth_token", "expired-token");
     localStorage.setItem("refresh_token", "valid-refresh-token");
 
     let batchCalls = 0;
     server.use(
-      http.get("*/api/v1/batches", ({ request }) => {
+      http.get("*/api/v1/batches", () => {
         batchCalls += 1;
-        if (request.headers.get("Authorization") === "Bearer access-token-2") {
-          return HttpResponse.json([{ id: "b-1" }]);
-        }
-        return HttpResponse.json({ detail: "expired" }, { status: 401 });
+        return batchCalls === 1
+          ? HttpResponse.json({ detail: "expired" }, { status: 401 })
+          : HttpResponse.json([{ id: "b-1" }]);
       })
     );
 
     const result = await api.getBatches();
 
     expect(batchCalls).toBe(2);
-    expect(localStorage.getItem("auth_token")).toBe("access-token-2");
+    expect(localStorage.getItem("auth_token")).toBe("expired-token");
+    expect(localStorage.getItem("refresh_token")).toBe("valid-refresh-token");
     expect(result).toEqual([{ id: "b-1" }]);
   });
 
@@ -178,18 +184,47 @@ describe("ApiService auth token handling", () => {
     expect(result).toEqual([{ id: "b-cookie-session" }]);
   });
 
-  it("notifies the registered listener when a silent refresh occurs", async () => {
+  it("shares one cookie refresh across concurrent requests", async () => {
+    let batchCalls = 0;
+    let refreshCalls = 0;
+    server.use(
+      http.get("*/api/v1/batches", () => {
+        batchCalls += 1;
+        return batchCalls <= 2
+          ? HttpResponse.json({ detail: "expired" }, { status: 401 })
+          : HttpResponse.json([]);
+      }),
+      http.post("*/api/v1/auth/refresh", async () => {
+        refreshCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return HttpResponse.json({
+          access_token: "cookie-refreshed-access",
+          refresh_token: "cookie-refreshed-refresh",
+          user: { id: "u-1", email: "user@example.com", role: "Coordinator" },
+        });
+      })
+    );
+
+    await Promise.all([api.getBatches(), api.getBatches()]);
+
+    expect(refreshCalls).toBe(1);
+    expect(batchCalls).toBe(4);
+  });
+
+  it("notifies the registered listener when a silent cookie refresh occurs", async () => {
     localStorage.setItem("auth_token", "expired-token");
     localStorage.setItem("refresh_token", "valid-refresh-token");
     const listener = vi.fn();
     api.setTokenRefreshListener(listener);
 
+    let batchCalls = 0;
     server.use(
-      http.get("*/api/v1/batches", ({ request }) =>
-        request.headers.get("Authorization") === "Bearer access-token-2"
-          ? HttpResponse.json([])
-          : HttpResponse.json({ detail: "expired" }, { status: 401 })
-      )
+      http.get("*/api/v1/batches", () => {
+        batchCalls += 1;
+        return batchCalls === 1
+          ? HttpResponse.json({ detail: "expired" }, { status: 401 })
+          : HttpResponse.json([]);
+      })
     );
 
     await api.getBatches();

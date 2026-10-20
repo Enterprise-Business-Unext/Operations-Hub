@@ -598,18 +598,12 @@ function isAbortError(err: unknown): boolean {
 }
 
 class ApiService {
-  private getToken(): string | null {
-    // Tokens are persisted in localStorage and attached as a Bearer header.
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("auth_token");
-  }
-
   // Promise cache for token refresh to prevent race conditions
   private refreshPromise: Promise<{ access_token: string; refresh_token: string; user: User } | null> | null = null;
 
   /**
-   * Invoked whenever a silent token refresh replaces the stored credentials, so
-   * AuthContext can resync instead of silently holding stale tokens.
+   * Invoked whenever a silent refresh rotates the cookies, so AuthContext can
+   * resync instead of silently holding stale user data.
    */
   private onTokensRefreshed: ((tokens: { access_token: string; refresh_token: string; user?: User }) => void) | null = null;
 
@@ -622,10 +616,8 @@ class ApiService {
   private async request<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
     const isMutation = options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase());
     const csrfToken = isMutation ? getCsrfToken() : null;
-    const token = this.getToken();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...(options.headers as Record<string, string>),
     };
@@ -714,6 +706,21 @@ class ApiService {
   }
 
   private async performTokenRefresh(): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.requestTokenRefresh();
+    }
+
+    const refreshPromise = this.refreshPromise;
+    try {
+      return await refreshPromise;
+    } finally {
+      if (this.refreshPromise === refreshPromise) {
+        this.refreshPromise = null;
+      }
+    }
+  }
+
+  private async requestTokenRefresh(): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
     // The backend stores the refresh token in an HttpOnly cookie, so it is
     // intentionally unavailable to localStorage or JavaScript.
     const controller = new AbortController();
@@ -731,10 +738,6 @@ class ApiService {
           refresh_token: string;
           user: User;
         };
-        if (typeof window !== "undefined" && localStorage.getItem("auth_token")) {
-          localStorage.setItem("auth_token", data.access_token);
-          localStorage.setItem("refresh_token", data.refresh_token);
-        }
         return data;
       }
     } catch {
