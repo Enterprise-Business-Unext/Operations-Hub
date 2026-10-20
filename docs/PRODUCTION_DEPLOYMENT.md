@@ -128,6 +128,8 @@ The workflow uses the built-in `GITHUB_TOKEN` with package-write permission to p
 3. **Deploy:** waits for the `production` environment, configures SSH using the supplied pinned host key and private key, copies the production Compose and Nginx template to EC2, pulls that commit's images, recreates services and waits for them to become healthy, creates the initial admin if it is missing, and prints service status.
 4. **Health check:** retries `https://<APP_URL>/health` and fails the workflow if it does not return a successful response.
 
+When the backend starts, it creates any missing schema tables and inserts missing built-in roles, teams, batch lookup options, and the default approval configuration. This initialization does not create user accounts; the initial admin is provisioned separately by the deployment step above.
+
 The workflow does not create AWS resources, install Docker on EC2, create the RDS database, create the TLS certificate, create the EC2 `.env`, or configure GHCR pull credentials on EC2. Those are one-time operations described above. A push to `main` triggers deployment only after both test and image-build jobs succeed.
 
 ## 7. First deployment and operations

@@ -46,8 +46,17 @@ export interface ButtonProps
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, loading, children, disabled, type, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
     const isLoading = Boolean(loading);
+    const Comp = asChild ? Slot : "button";
+    const buttonContent = asChild ? children : (
+      <>
+        {isLoading && (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+        )}
+        {children}
+      </>
+    );
+
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
@@ -59,11 +68,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={isLoading || undefined}
         {...props}
       >
-        {isLoading && (
-          // Occupies the same box as a leading icon so the label does not shift.
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
-        )}
-        {children}
+        {buttonContent}
       </Comp>
     );
   }

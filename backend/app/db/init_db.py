@@ -46,6 +46,61 @@ def _is_legacy_string_column(column_type) -> bool:
     return isinstance(column_type, String) and not isinstance(column_type, SAEnum)
 
 
+def _seed_base_data(db: Session) -> None:
+    # Seed Standard System Roles Only
+    default_roles = [
+        {"name": "Admin", "system_role": "Admin"},
+        {"name": "Manager", "system_role": "Manager"},
+        {"name": "Coordinator", "system_role": "Coordinator"},
+        {"name": "Sales", "system_role": "Sales"},
+        {"name": "Faculty", "system_role": "Faculty"},
+    ]
+
+    for r_spec in default_roles:
+        role_obj = db.query(Role).filter(Role.name == r_spec["name"]).first()
+        if not role_obj:
+            role_obj = Role(
+                name=r_spec["name"],
+                system_role=r_spec["system_role"],
+                is_active=True
+            )
+            db.add(role_obj)
+
+    # Seed default teams without creating any user accounts.
+    default_teams = [
+        {"name": "Delivery", "department": "Ops", "description": "Batch Delivery & Training Operations Team"},
+        {"name": "Sales", "department": "Ops", "description": "Enterprise Accounts & Sales Operations Team"},
+        {"name": "Finance", "department": "Ops", "description": "Financial Approvals, Invoicing & Billing Team"},
+    ]
+    for t_spec in default_teams:
+        team_obj = db.query(Team).filter(Team.name == t_spec["name"]).first()
+        if not team_obj:
+            team_obj = Team(
+                name=t_spec["name"],
+                department=t_spec["department"],
+                description=t_spec["description"],
+                is_active=True
+            )
+            db.add(team_obj)
+
+    default_options = [
+        (BatchCategory, ["Bootcamp", "RBT", "PJP", "Workshop"]),
+        (DeliveryMode, ["Online", "F2F", "Blended"]),
+        (Accommodation, ["Residential", "Non-Residential"]),
+        (Entity, ["Unext", "Unext BSFI"]),
+        (Vertical, ["CG&O", "DS/ITES", "ET/BFSI", "ET/ITES", "ET/Merittrac", "IT/ITES"]),
+        (ProgramType, ["RBT", "Bootcamp", "RGT"]),
+        (FacultyType, ["Internal Full-time", "External Consultant", "HOP"]),
+    ]
+    for option_model, names in default_options:
+        for name in names:
+            if not db.query(option_model).filter(option_model.name == name).first():
+                db.add(option_model(name=name, is_active=True))
+
+    if not db.query(ApprovalConfiguration).first():
+        db.add(ApprovalConfiguration())
+
+
 def init_db(db: Session = None, seed_base_data: bool = True) -> None:
     """Creates database schema tables, ensures migration columns exist, and seeds base roles without demo data."""
     Base.metadata.create_all(bind=engine)
@@ -269,61 +324,9 @@ def init_db(db: Session = None, seed_base_data: bool = True) -> None:
         db = SessionLocal()
 
     try:
-        # Seed Standard System Roles Only
-        default_roles = [
-            {"name": "Admin", "system_role": "Admin"},
-            {"name": "Manager", "system_role": "Manager"},
-            {"name": "Coordinator", "system_role": "Coordinator"},
-            {"name": "Sales", "system_role": "Sales"},
-            {"name": "Faculty", "system_role": "Faculty"},
-        ]
-
-        for r_spec in default_roles:
-            role_obj = db.query(Role).filter(Role.name == r_spec["name"]).first()
-            if not role_obj:
-                role_obj = Role(
-                    name=r_spec["name"],
-                    system_role=r_spec["system_role"],
-                    is_active=True
-                )
-                db.add(role_obj)
-
-        # Seed Default Teams (Delivery, Sales, Finance by default under Ops department)
-        default_teams = [
-            {"name": "Delivery", "department": "Ops", "description": "Batch Delivery & Training Operations Team"},
-            {"name": "Sales", "department": "Ops", "description": "Enterprise Accounts & Sales Operations Team"},
-            {"name": "Finance", "department": "Ops", "description": "Financial Approvals, Invoicing & Billing Team"},
-        ]
-        for t_spec in default_teams:
-            team_obj = db.query(Team).filter(Team.name == t_spec["name"]).first()
-            if not team_obj:
-                team_obj = Team(
-                    name=t_spec["name"],
-                    department=t_spec["department"],
-                    description=t_spec["description"],
-                    is_active=True
-                )
-                db.add(team_obj)
-
-        default_options = [
-            (BatchCategory, ["Bootcamp", "RBT", "PJP", "Workshop"]),
-            (DeliveryMode, ["Online", "F2F", "Blended"]),
-            (Accommodation, ["Residential", "Non-Residential"]),
-            (Entity, ["Unext", "Unext BSFI"]),
-            (Vertical, ["CG&O", "DS/ITES", "ET/BFSI", "ET/ITES", "ET/Merittrac", "IT/ITES"]),
-            (ProgramType, ["RBT", "Bootcamp", "RGT"]),
-            (FacultyType, ["Internal Full-time", "External Consultant", "HOP"]),
-        ]
-        for option_model, names in default_options:
-            for name in names:
-                if not db.query(option_model).filter(option_model.name == name).first():
-                    db.add(option_model(name=name, is_active=True))
-
-        if not db.query(ApprovalConfiguration).first():
-            db.add(ApprovalConfiguration())
-
+        _seed_base_data(db)
         db.commit()
-        print("Database schema initialized and base roles configured (zero demo data).")
+        print("Database schema and required reference data initialized (no users created).")
     except Exception as e:
         db.rollback()
         print(f"Error initializing database: {e}")

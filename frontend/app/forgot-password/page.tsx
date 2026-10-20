@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Layers, Mail, ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';
+import { Layers, ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -50,29 +50,25 @@ export default function ForgotPasswordPage() {
             <Layers size={28} className='text-primary-foreground' aria-hidden='true' />
           </div>
           <h1 className='text-3xl font-bold tracking-tight text-foreground'>Reset your password</h1>
-          <p className='mt-2 text-sm text-muted-foreground'>Enter your corporate email and we\u2019ll send you a password reset link</p>
+          <p className='mt-2 text-sm text-muted-foreground'>Enter your corporate email and we'll send you a password reset link</p>
         </div>
         <div className={cn(PANEL_CLASS, 'p-5 sm:p-6')}>
           {!submitted ? (
             <>
-              <PanelTitle title='Forgot password' description='We\u2019ll email a password reset link to your registered email address.' />
+              <PanelTitle title='Forgot password' description="We'll email a password reset link to your registered email address." />
               {error && <ErrorBanner message={error} className='mt-4' />}
               <form onSubmit={handleSubmit} className='mt-5 flex flex-col gap-5'>
                 <div className='space-y-1.5'>
                   <Label htmlFor={emailId} className='block text-foreground'>Corporate Email Address</Label>
-                  <div className='relative'>
-                    <Mail size={18} className='absolute left-1/2 top-1/2 -translate-y-1/2 text-muted-foreground' aria-hidden='true' />
-                    <Input
-                      id={emailId}
-                      type='email'
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      placeholder='name@company.com'
-                      className='pl-10 pr-3'
-                      required
-                      autoComplete='email'
-                    />
-                  </div>
+                  <Input
+                    id={emailId}
+                    type='email'
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder='name@company.com'
+                    required
+                    autoComplete='email'
+                  />
                 </div>
                 <Button type='submit' loading={isLoading} size='lg' className='mt-2 w-full'>
                   <span>{isLoading ? 'Sending...' : 'Send reset link'}</span>
@@ -89,7 +85,7 @@ export default function ForgotPasswordPage() {
             <>
               <div className='text-center'>
                 <CheckCircle className='mx-auto h-12 w-12 text-green-600' aria-hidden='true' />
-                <PanelTitle title='Check your email' description='If an account with that email exists, we\u2019ve sent a password reset link to it.' />
+                <PanelTitle title='Check your email' description="If an account with that email exists, we've sent a password reset link to it." />
                 <p className='mt-3 text-sm text-muted-foreground'>For security reasons, we do not reveal whether an account exists.</p>
                 <p className='mt-2 text-sm text-muted-foreground'>The link will expire in 1 hour.</p>
               </div>

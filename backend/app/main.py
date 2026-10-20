@@ -198,8 +198,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Keep the schema aligned at startup; production skips optional seed data.
-    init_db(seed_base_data=settings.ENVIRONMENT != "production")
+    # Keep the schema and required lookup data initialized in every environment.
+    init_db(seed_base_data=True)
     
     # Start scheduler
     start_scheduler()
