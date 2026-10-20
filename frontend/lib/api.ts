@@ -599,9 +599,9 @@ function isAbortError(err: unknown): boolean {
 
 class ApiService {
   private getToken(): string | null {
-    // Tokens are stored in HttpOnly cookies set by the backend, not localStorage.
-    // The browser attaches them automatically via `credentials: "include"`.
-    return null;
+    // Tokens are persisted in localStorage and attached as a Bearer header.
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("auth_token");
   }
 
   // Promise cache for token refresh to prevent race conditions
@@ -622,8 +622,10 @@ class ApiService {
   private async request<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
     const isMutation = options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase());
     const csrfToken = isMutation ? getCsrfToken() : null;
+    const token = this.getToken();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...(options.headers as Record<string, string>),
     };
@@ -712,7 +714,11 @@ class ApiService {
   }
 
   private async performTokenRefresh(): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
-    // Backend reads the `refresh_token` HttpOnly cookie and sets a new `auth_token` cookie.
+    const refreshToken =
+      typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
+    if (!refreshToken) return null;
+
+    // Backend reads the `refresh_token` and rotates the `auth_token`.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -723,7 +729,16 @@ class ApiService {
         signal: controller.signal,
       });
       if (refreshRes.ok) {
-        return await refreshRes.json();
+        const data = (await refreshRes.json()) as {
+          access_token: string;
+          refresh_token: string;
+          user: User;
+        };
+        if (typeof window !== "undefined") {
+          if (data.access_token) localStorage.setItem("auth_token", data.access_token);
+          if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
+        }
+        return data;
       }
     } catch {
       // Refresh failed
