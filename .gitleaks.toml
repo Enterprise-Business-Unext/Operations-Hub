@@ -4,8 +4,8 @@ title = "Ops Gitleaks configuration"
 useDefault = true
 
 [[rules]]
-id = "smtp-credential"
-description = "SMTP or Gmail password and token assignments"
-regex = '''(?i)(?:smtp|gmail)[_.-]?(?:password|pass|pwd|secret|key|token)\s*[:=]\s*["']?([^\s"']{8,})'''
+id = "microsoft-graph-credential"
+description = "Microsoft Graph application credential assignments"
+regex = '''(?i)(?:graph|microsoft)[_.-]?(?:client[_.-]?secret|password|pass|pwd|secret|key|token)\s*[:=]\s*["']?([^\s"']{8,})'''
 secretGroup = 1
-keywords = ["smtp", "gmail"]
+keywords = ["graph", "microsoft"]

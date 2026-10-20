@@ -1,0 +1,96 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in the EC2 .env file}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ops_network
+
+  backend:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX in the EC2 .env file}-backend:${IMAGE_TAG:?Set IMAGE_TAG for a release}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_SERVER: ${POSTGRES_SERVER:?Set the RDS endpoint in the EC2 .env file}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      PGSSLMODE: require
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - ops_network
+
+  frontend:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX in the EC2 .env file}-frontend:${IMAGE_TAG:?Set IMAGE_TAG for a release}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "const net=require('net'); const s=net.connect(3000,'127.0.0.1'); s.on('connect',()=>{s.destroy();process.exit(0)}); s.on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - ops_network
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN_NAME: ${DOMAIN_NAME:?Set DOMAIN_NAME in the EC2 .env file}
+    volumes:
+      - ./nginx/production.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - acme_webroot:/var/www/certbot:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t && kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ops_network
+
+volumes:
+  redisdata:
+  acme_webroot:
+
+networks:
+  ops_network:
+    driver: bridge

@@ -5,7 +5,7 @@ Run the commands below from the repository root unless stated otherwise.
 ## Start the database and backend
 
 Copy the repository `.env.example` to `.env` and configure the required
-production secrets and SMTP values before starting the default production
+production secrets and Microsoft Graph values before starting the default production
 stack. For local development, set `ENVIRONMENT=development` and `DEBUG=True`
 in `.env`.
 

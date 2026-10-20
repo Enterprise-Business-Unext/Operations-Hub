@@ -9,6 +9,8 @@ An enterprise operations platform for managing corporate training batches, train
   slide-ready presentation outline.
 - [Complete workflow reference](WORKFLOWS_COMPLETE.md) — technical workflow and
   API summary.
+- [Production deployment guide](docs/PRODUCTION_DEPLOYMENT.md) — EC2, RDS,
+  Microsoft Graph, GHCR, GitHub Actions, and production Compose setup.
 - [Workflow documents](workflows/) — detailed lifecycle, schedule, quality,
   authorization, and data-model references.
 
@@ -126,7 +128,7 @@ sequenceDiagram
 ### 1. Start Services
 
 Copy `.env.example` to `.env`, replace the empty secret values with unique
-generated values, and configure SMTP before starting the production-default
+generated values, and configure Microsoft Graph before starting the production-default
 stack. Generate secrets with `python -c "import secrets; print(secrets.token_urlsafe(48))"`
 and paste each result into the corresponding `.env` field.
 
@@ -141,10 +143,12 @@ same-origin `/api/v1` path. PostgreSQL and Redis are available only on the
 private Compose network. The backend runs without a development reloader or
 source-code bind mount; the optional backend host port is loopback-bound.
 
-Set `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, and the public
-HTTPS `FRONTEND_URL` for production email delivery. Production settings reject
-missing SMTP/Redis credentials, insecure CORS origins, a development secret, or
-debug mode. `BACKEND_CORS_ORIGINS` may remain `[]` for same-origin deployments;
+Set `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`,
+`GRAPH_SENDER_EMAIL`, and the public HTTPS `FRONTEND_URL` for production email
+delivery. The Entra application needs Microsoft Graph `Mail.Send` application
+permission with admin consent. Production settings reject missing Graph/Redis
+credentials, insecure CORS origins, a development secret, or debug mode.
+`BACKEND_CORS_ORIGINS` may remain `[]` for same-origin deployments;
 otherwise set it to a JSON array containing only HTTPS origins.
 
 The bundled Nginx listener is HTTP-only and must sit behind a trusted
@@ -152,6 +156,14 @@ TLS-terminating ingress in production. It binds to loopback by default; set
 `NGINX_BIND_ADDRESS` to an address reachable by the ingress and restrict that
 port with host/network firewall rules. Do not expose the HTTP listener directly
 to untrusted networks.
+
+### EC2 Production Deployment
+
+See the [production deployment guide](docs/PRODUCTION_DEPLOYMENT.md) for the
+EC2/RDS topology, Microsoft Graph setup, GHCR access, GitHub environment
+secrets, first deployment, and rollback steps. The dedicated production stack
+is [docker-compose.production.yml](docker-compose.production.yml); it does not
+start a local PostgreSQL container.
 
 ### 2. Initialize the Database Schema
 
@@ -801,8 +813,8 @@ If `batch.training_days > scheduled_dates`:
 | Gate Completion | Gate 1 or 2 | None | Logged only |
 
 **Email Service Configuration**
-- SMTP: `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_TLS` (True), `EMAIL_FROM`, `EMAIL_FROM_NAME`, `FRONTEND_URL`
-- Fallback: Logs to console if SMTP not configured
+- Microsoft Graph: `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_SENDER_EMAIL`, `EMAIL_FROM_NAME`, `FRONTEND_URL`
+- Fallback: Logs an error if Microsoft Graph is not configured or delivery fails
 
 **Welcome Email** (on admin user creation)
 - Includes temporary password, security notice, login link

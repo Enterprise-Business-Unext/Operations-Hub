@@ -1,11 +1,11 @@
 import secrets
 import string
 import logging
+import time
 from typing import Optional
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from urllib.parse import quote
 
-import aiosmtplib
+import httpx
 from jinja2 import Template
 
 logger = logging.getLogger(__name__)
@@ -218,36 +218,43 @@ Please do not reply to this email.
 class EmailService:
     def __init__(self):
         settings = _get_settings()
-        self.smtp_host = settings.SMTP_HOST
-        self.smtp_port = settings.SMTP_PORT
-        self.smtp_user = settings.SMTP_USER
-        self.smtp_password = settings.SMTP_PASSWORD
-        self.smtp_tls = settings.SMTP_TLS
-        self.email_from = settings.EMAIL_FROM
+        self.graph_tenant_id = settings.GRAPH_TENANT_ID
+        self.graph_client_id = settings.GRAPH_CLIENT_ID
+        self.graph_client_secret = settings.GRAPH_CLIENT_SECRET
+        self.graph_sender_email = settings.GRAPH_SENDER_EMAIL
         self.email_from_name = settings.EMAIL_FROM_NAME
         self.frontend_url = settings.FRONTEND_URL
+        self._access_token: Optional[str] = None
+        self._access_token_expires_at = 0.0
 
-    def _create_message(
-        self,
-        to_email: str,
-        subject: str,
-        html_content: str,
-        text_content: str
-    ) -> MIMEMultipart:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{self.email_from_name} <{self.email_from}>"
-        msg["To"] = to_email
-        
-        # Security headers to prevent tracking and auto-replies
-        msg["X-Auto-Response-Suppress"] = "OOF, AutoReply"
-        msg["List-Unsubscribe"] = f"<mailto:{self.email_from}>"
-        msg["Precedence"] = "bulk"
-        
-        msg.attach(MIMEText(text_content, "plain", "utf-8"))
-        msg.attach(MIMEText(html_content, "html", "utf-8"))
-        
-        return msg
+    async def _get_access_token(self, client: httpx.AsyncClient) -> str:
+        if self._access_token and self._access_token_expires_at > time.monotonic() + 60:
+            return self._access_token
+
+        token_url = (
+            f"https://login.microsoftonline.com/"
+            f"{quote(self.graph_tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        response = await client.post(
+            token_url,
+            data={
+                "client_id": self.graph_client_id,
+                "client_secret": self.graph_client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+                "grant_type": "client_credentials",
+            },
+        )
+        response.raise_for_status()
+        token_data = response.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise ValueError("Microsoft identity response did not contain an access token")
+
+        self._access_token = access_token
+        self._access_token_expires_at = time.monotonic() + float(
+            token_data.get("expires_in", 3600)
+        )
+        return access_token
 
     async def send_email(
         self,
@@ -256,26 +263,41 @@ class EmailService:
         html_content: str,
         text_content: str,
     ) -> bool:
-        """Send an email via SMTP. Returns True if successful."""
-        if not self.smtp_host or not self.smtp_user or not self.smtp_password:
-            logger.error("Email delivery is not configured; message was not sent")
+        """Send an email using Microsoft Graph application permissions."""
+        if not all((
+            self.graph_tenant_id,
+            self.graph_client_id,
+            self.graph_client_secret,
+            self.graph_sender_email,
+        )):
+            logger.error("Microsoft Graph email delivery is not configured; message was not sent")
             return False
-        
+
         try:
-            message = self._create_message(to_email, subject, html_content, text_content)
-            
-            await aiosmtplib.send(
-                message,
-                hostname=self.smtp_host,
-                port=self.smtp_port,
-                username=self.smtp_user,
-                password=self.smtp_password,
-                start_tls=self.smtp_tls,
-                timeout=30
-            )
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                access_token = await self._get_access_token(client)
+                sender = quote(self.graph_sender_email, safe="")
+                response = await client.post(
+                    f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    json={
+                        "message": {
+                            "subject": subject,
+                            "body": {
+                                "contentType": "HTML",
+                                "content": html_content,
+                            },
+                            "toRecipients": [
+                                {"emailAddress": {"address": to_email}}
+                            ],
+                        },
+                        "saveToSentItems": True,
+                    },
+                )
+                response.raise_for_status()
             return True
         except Exception:
-            logger.exception("Email delivery failed")
+            logger.exception("Microsoft Graph email delivery failed")
             return False
 
     async def send_welcome_email(

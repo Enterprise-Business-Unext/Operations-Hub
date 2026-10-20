@@ -36,7 +36,7 @@ When reapproval, subject and body include changed fields details.
 **Email Content:**
 - Subject: `Batch Approved: {batch_id}`
 - Body: Batch ID, Approval ID, message to proceed with scheduling
-- Sends both HTML and plain-text versions
+- Sends the HTML email body through Microsoft Graph
 
 **Failure Handling:** Individual email failures are caught inside `send_email` (returns `False`), loop continues to next recipient.
 
@@ -51,7 +51,7 @@ When reapproval, subject and body include changed fields details.
 **Email Content:**
 - Subject: `Session Scheduled: {topic} on {date_str}`
 - Body: Faculty name, topic, date
-- Sends both HTML and plain-text versions
+- Sends the HTML email body through Microsoft Graph
 
 **Conditions:**
 - Only sent if `faculty_email` is provided (not None)
@@ -72,18 +72,16 @@ When reapproval, subject and body include changed fields details.
 
 ## Email Service Configuration
 
-**SMTP Settings:**
-- `SMTP_HOST`: Default `localhost`
-- `SMTP_PORT`: Default `587`
-- `SMTP_USER`: SMTP authentication username (required for real delivery)
-- `SMTP_PASSWORD`: SMTP authentication password (required for real delivery)
-- `SMTP_TLS`: Default `True`
-- `EMAIL_FROM`: Default `noreply@enterprise-ops.com`
+**Microsoft Graph Settings:**
+- `GRAPH_TENANT_ID`: Entra tenant ID
+- `GRAPH_CLIENT_ID`: Entra application client ID
+- `GRAPH_CLIENT_SECRET`: Entra application client secret
+- `GRAPH_SENDER_EMAIL`: Mailbox address the application is permitted to send as
 - `EMAIL_FROM_NAME`: Default `Enterprise Ops Platform`
 - `FRONTEND_URL`: Default `http://localhost:3000`
 
 **Fallback Behavior:**
-- If SMTP not configured (`SMTP_HOST`, `SMTP_USER`, or `SMTP_PASSWORD` missing): logs `[EMAIL] SMTP not configured. Would send to {email}: {subject}` and returns `False`
+- If Microsoft Graph is not configured: logs an error without recipient or message contents and returns `False`
 - `send_email` requires both `html_content` and `text_content` arguments
 
 ## Welcome Email
@@ -92,7 +90,7 @@ When admin creates a user via `/auth/users/admin-create`:
 
 **Conditions:**
 - `send_welcome_email` flag is true (default)
-- SMTP is configured
+- Microsoft Graph app-only credentials are configured
 
 **Content:**
 - Subject: `Welcome to Enterprise Ops Platform - Your Account Credentials`
@@ -124,7 +122,7 @@ All notification events are also recorded in `audit_logs` table with event types
 ## EmailService (from backend/app/core/email.py)
 
 The email service provides:
-- `send_email(to_email, subject, html_content, text_content, password=None)` - Basic email sending via SMTP; returns `True` if successful, `False` if SMTP not configured or send fails
+- `send_email(to_email, subject, html_content, text_content)` - Sends through Microsoft Graph; returns `True` if accepted, `False` if Graph is not configured or send fails
 - `send_welcome_email(to_email, full_name, password)` - Welcome email with credentials template; renders both HTML and plain-text versions using Jinja2 templates
 
 All methods are async. `send_email` catches exceptions internally and returns `False`.

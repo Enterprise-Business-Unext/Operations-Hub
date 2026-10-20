@@ -116,16 +116,14 @@ class Settings(BaseSettings):
                     "REDIS_PASSWORD must be at least 16 characters in production"
                 )
 
-            if (
-                not self.SMTP_HOST
-                or _is_local_host(self.SMTP_HOST)
-                or not self.SMTP_USER
-                or not self.SMTP_PASSWORD
-                or not self.SMTP_TLS
-                or not self.EMAIL_FROM
-            ):
+            if not all((
+                self.GRAPH_TENANT_ID,
+                self.GRAPH_CLIENT_ID,
+                self.GRAPH_CLIENT_SECRET,
+                self.GRAPH_SENDER_EMAIL,
+            )):
                 raise ValueError(
-                    "Production email requires SMTP_HOST, SMTP_USER, SMTP_PASSWORD, EMAIL_FROM, and SMTP_TLS=true"
+                    "Production email requires GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, and GRAPH_SENDER_EMAIL"
                 )
 
         return self
@@ -165,13 +163,11 @@ class Settings(BaseSettings):
     RESET_TOKEN_TTL_HOURS: int = 1
     RESET_TOKEN_TTL_SECONDS: int = 3600
 
-    # Email settings
-    SMTP_HOST: str = "localhost"
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_TLS: bool = True
-    EMAIL_FROM: str = "noreply@enterprise-ops.com"
+    # Microsoft Graph app-only email settings
+    GRAPH_TENANT_ID: str = ""
+    GRAPH_CLIENT_ID: str = ""
+    GRAPH_CLIENT_SECRET: str = ""
+    GRAPH_SENDER_EMAIL: str = ""
     EMAIL_FROM_NAME: str = "Enterprise Ops Platform"
     FRONTEND_URL: str = "http://localhost:3000"
 
