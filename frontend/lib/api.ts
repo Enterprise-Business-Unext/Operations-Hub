@@ -714,11 +714,8 @@ class ApiService {
   }
 
   private async performTokenRefresh(): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
-    const refreshToken =
-      typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
-    if (!refreshToken) return null;
-
-    // Backend reads the `refresh_token` and rotates the `auth_token`.
+    // The backend stores the refresh token in an HttpOnly cookie, so it is
+    // intentionally unavailable to localStorage or JavaScript.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -734,9 +731,9 @@ class ApiService {
           refresh_token: string;
           user: User;
         };
-        if (typeof window !== "undefined") {
-          if (data.access_token) localStorage.setItem("auth_token", data.access_token);
-          if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
+        if (typeof window !== "undefined" && localStorage.getItem("auth_token")) {
+          localStorage.setItem("auth_token", data.access_token);
+          localStorage.setItem("refresh_token", data.refresh_token);
         }
         return data;
       }

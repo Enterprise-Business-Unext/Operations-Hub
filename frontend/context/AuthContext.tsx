@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
-import { User, api } from "@/lib/api";
+import { User, api, ApiError } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
 interface AuthContextType {
@@ -14,19 +14,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Non-sensitive presence flag read by `middleware.ts` so unauthenticated
-// requests are redirected before the page renders.
-const SESSION_COOKIE = "ops_session";
-
-function setSessionCookie(present: boolean) {
-  if (typeof document === "undefined") return;
-  if (present) {
-    document.cookie = `${SESSION_COOKIE}=1; path=/; SameSite=Lax; Secure`;
-  } else {
-    document.cookie = `${SESSION_COOKIE}=; path=/; Max-Age=0; SameSite=Lax; Secure`;
-  }
-}
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -38,7 +25,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logoutRef = useRef<() => Promise<void>>(async () => {});
 
   const clearSession = useCallback(async () => {
-    setSessionCookie(false);
     setUser(null);
     try {
       await api.logout();
@@ -56,7 +42,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   logoutRef.current = logout;
 
   const storeSession = useCallback((data: { access_token: string; refresh_token: string; user?: User }) => {
-    setSessionCookie(true);
     if (data.user) setUser(data.user);
   }, []);
 
@@ -93,26 +78,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      // Tokens live in HttpOnly cookies; the presence flag tells us whether a session exists.
-      const hasSession = document.cookie
-        .split("; ")
-        .some((c) => c.startsWith(`${SESSION_COOKIE}=`) && c.slice(SESSION_COOKIE.length + 1));
-      if (!hasSession) {
-        if (!cancelled) setIsLoading(false);
-        return;
-      }
-
       try {
+        // The auth cookies are HttpOnly and cannot be inspected by JavaScript.
+        // Ask the API to validate them instead of guessing from document.cookie.
         const profile = await api.getMe();
         if (cancelled) return;
         setUser(profile);
       } catch (err) {
         if (cancelled) return;
-        console.error("Session expired or invalid, attempting refresh:", err);
-        try {
-          await refreshAccessToken();
-        } catch {
-          clearSession();
+        if (!(err instanceof ApiError && err.status === 401)) {
+          console.error("Failed to restore the current session:", err);
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -123,7 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       cancelled = true;
     };
-  }, [refreshAccessToken, clearSession]);
+  }, []);
 
   const login = useCallback(
     async (email: string, password: string) => {

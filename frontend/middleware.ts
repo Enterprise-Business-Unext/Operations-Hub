@@ -3,11 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 /**
  * Route protection.
  *
- * The app stores its credentials in `localStorage`, which edge middleware cannot
- * read. `AuthContext` therefore mirrors a non-sensitive presence flag into the
- * `ops_session` cookie, and this middleware uses it to reject unauthenticated
- * requests *before* the page is rendered, instead of bouncing the user after
- * hydration.
+ * The backend sets `ops_session` as an HttpOnly cookie alongside the auth
+ * cookies. Middleware uses its presence to reject unauthenticated requests
+ * before the page renders; the client validates the actual session with `/me`.
  *
  * This is a navigation-level guard only. It contains no credentials, and it is
  * not a substitute for authorization, which the API must enforce on every
@@ -26,10 +24,8 @@ export function middleware(request: NextRequest) {
   );
 
   if (isPublic) {
-    // Already signed in and heading for the login screen: send them home.
-    if (hasSession) {
-      return NextResponse.redirect(new URL("/", request.url));
-    }
+    // Let the client validate HttpOnly session cookies. A stale presence
+    // cookie must not bounce /login back to a protected route indefinitely.
     return NextResponse.next();
   }
 

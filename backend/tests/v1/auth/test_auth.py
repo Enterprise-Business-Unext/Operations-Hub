@@ -24,6 +24,28 @@ def test_login_invalid_password(client):
     assert response.status_code == 401
 
 
+def test_refresh_uses_httponly_cookie_when_request_body_is_empty(client, db_session):
+    from app.core.security import create_refresh_token
+
+    admin = db_session.query(User).filter_by(email="test_admin@ops.com").one()
+    refresh_token = create_refresh_token(subject=str(admin.id))
+
+    response = client.post(
+        "/api/v1/auth/refresh",
+        cookies={"refresh_token": refresh_token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == admin.email
+    assert "auth_token" in response.cookies
+
+
+def test_refresh_without_body_or_cookie_returns_unauthorized(client):
+    response = client.post("/api/v1/auth/refresh")
+
+    assert response.status_code == 401
+
+
 def test_tenth_failed_login_attempt_locks_account(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "MAX_FAILED_LOGIN_ATTEMPTS", 10)
 

@@ -1,8 +1,9 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { api } from "@/lib/api";
+import type { User } from "@/lib/api";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 
@@ -10,14 +11,18 @@ vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    getMe: vi.fn(),
-    refreshToken: vi.fn(),
-    logout: vi.fn(),
-    setTokenRefreshListener: vi.fn(),
-  },
-}));
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    api: {
+      getMe: vi.fn(),
+      refreshToken: vi.fn(),
+      logout: vi.fn(),
+      setTokenRefreshListener: vi.fn(),
+    },
+  };
+});
 
 function AuthStatus() {
   const { user, isLoading } = useAuth();
@@ -27,16 +32,26 @@ function AuthStatus() {
 describe("AuthProvider session restoration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    document.cookie = "ops_session=1";
+    document.cookie = "";
   });
 
-  it("clears the middleware session flag before navigating after restore fails", async () => {
-    let finishLogout!: () => void;
-    vi.mocked(api.getMe).mockRejectedValue(new Error("Access token expired"));
-    vi.mocked(api.refreshToken).mockRejectedValue(new Error("Refresh token expired"));
-    vi.mocked(api.logout).mockImplementation(
-      () => new Promise<void>((resolve) => { finishLogout = resolve; })
+  it("restores a valid HttpOnly-cookie session without reading document.cookie", async () => {
+    const profile = { id: "user-1", email: "user@example.com", role: "Coordinator" } as User;
+    vi.mocked(api.getMe).mockResolvedValue(profile);
+
+    render(
+      <AuthProvider>
+        <AuthStatus />
+      </AuthProvider>
     );
+
+    await waitFor(() => expect(screen.getByText("Signed in")).toBeInTheDocument());
+    expect(api.getMe).toHaveBeenCalledOnce();
+    expect(api.logout).not.toHaveBeenCalled();
+  });
+
+  it("finishes bootstrap when there is no valid session", async () => {
+    vi.mocked(api.getMe).mockRejectedValue(new Error("Could not validate credentials"));
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     render(
@@ -45,15 +60,7 @@ describe("AuthProvider session restoration", () => {
       </AuthProvider>
     );
 
-    await waitFor(() => expect(api.logout).toHaveBeenCalled());
-    expect(document.cookie).not.toContain("ops_session=1");
-    expect(screen.getByText("Loading session")).toBeInTheDocument();
-
-    await act(async () => {
-      finishLogout();
-    });
-
     await waitFor(() => expect(screen.getByText("Signed out")).toBeInTheDocument());
-    expect(router.replace).toHaveBeenCalledWith("/login");
+    expect(api.getMe).toHaveBeenCalledOnce();
   });
 });

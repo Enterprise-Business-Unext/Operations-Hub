@@ -3,8 +3,8 @@ import { NextRequest } from "next/server";
 import { middleware } from "./middleware";
 
 /**
- * The middleware gates navigation using the non-sensitive `ops_session`
- * presence cookie that `AuthContext` mirrors from localStorage.
+ * The middleware gates protected navigation using the backend's HttpOnly
+ * `ops_session` cookie.
  */
 function makeRequest(pathname: string, hasSession: boolean) {
   const request = new NextRequest(new URL(pathname, "http://localhost:3000"));
@@ -43,10 +43,9 @@ describe("route protection middleware", () => {
     expect(response.status).toBe(200);
   });
 
-  it("redirects an already-authenticated user away from /login", () => {
+  it("allows /login even when a session cookie is present so the client can validate it", () => {
     const response = middleware(makeRequest("/login", true));
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toContain("/");
+    expect(response.status).toBe(200);
   });
 
   it("gates /admin like any other protected route", () => {

@@ -77,14 +77,25 @@ def login(
 
 @router.post("/refresh", response_model=TokenPair)
 def refresh_token(
-    data: RefreshTokenRequest,
     request: Request,
     response: Response,
+    request_data: Optional[RefreshTokenRequest] = None,
     service: AuthService = Depends(get_auth_service)
 ) -> Any:
     """Generate new access token using refresh token."""
+    refresh_token = (
+        request_data.refresh_token
+        if request_data
+        else request.cookies.get("refresh_token")
+    )
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is missing or expired",
+        )
+
     client = get_client_info(request)
-    result = service.refresh_tokens(data.refresh_token, ip_address=client["ip_address"], user_agent=client["user_agent"])
+    result = service.refresh_tokens(refresh_token, ip_address=client["ip_address"], user_agent=client["user_agent"])
     response.set_cookie(
         key="auth_token",
         value=result.access_token,
@@ -301,4 +312,3 @@ def reset_password(
     """Public endpoint: Reset password using token from email."""
     client = get_client_info(request)
     return service.reset_password(data.token, data.new_password, ip_address=client["ip_address"], user_agent=client["user_agent"])
-

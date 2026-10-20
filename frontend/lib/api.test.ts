@@ -151,6 +151,33 @@ describe("ApiService auth token handling", () => {
     expect(result).toEqual([{ id: "b-1" }]);
   });
 
+  it("refreshes from the HttpOnly cookie when localStorage has no refresh token", async () => {
+    let batchCalls = 0;
+    let refreshCalls = 0;
+    server.use(
+      http.get("*/api/v1/batches", () => {
+        batchCalls += 1;
+        return batchCalls === 1
+          ? HttpResponse.json({ detail: "expired" }, { status: 401 })
+          : HttpResponse.json([{ id: "b-cookie-session" }]);
+      }),
+      http.post("*/api/v1/auth/refresh", () => {
+        refreshCalls += 1;
+        return HttpResponse.json({
+          access_token: "cookie-refreshed-access",
+          refresh_token: "cookie-refreshed-refresh",
+          user: { id: "u-1", email: "user@example.com", role: "Coordinator" },
+        });
+      })
+    );
+
+    const result = await api.getBatches();
+
+    expect(refreshCalls).toBe(1);
+    expect(batchCalls).toBe(2);
+    expect(result).toEqual([{ id: "b-cookie-session" }]);
+  });
+
   it("notifies the registered listener when a silent refresh occurs", async () => {
     localStorage.setItem("auth_token", "expired-token");
     localStorage.setItem("refresh_token", "valid-refresh-token");
@@ -177,7 +204,10 @@ describe("ApiService auth token handling", () => {
   it("surfaces a 401 when no refresh token is available", async () => {
     localStorage.setItem("auth_token", "expired-token");
     server.use(
-      http.get("*/api/v1/batches", () => HttpResponse.json({ detail: "nope" }, { status: 401 }))
+      http.get("*/api/v1/batches", () => HttpResponse.json({ detail: "nope" }, { status: 401 })),
+      http.post("*/api/v1/auth/refresh", () =>
+        HttpResponse.json({ detail: "Refresh token is missing or expired" }, { status: 401 })
+      )
     );
 
     const error = await api.getBatches().catch((e) => e);
