@@ -11,6 +11,7 @@ import { ErrorBanner, PANEL_CLASS, PanelTitle } from "@/components/ui/panel";
 import { BRAND_GRADIENT } from "@/components/Navbar";
 import { errorMessage } from "@/lib/notify";
 import { cn } from "@/lib/utils";
+import { ApiError } from "@/lib/api";
 
 const SIGN_IN_FALLBACK = "Unable to sign in. Verify your email and password and try again.";
 
@@ -45,7 +46,11 @@ export default function LoginPage() {
     try {
       await login(email.trim().toLowerCase(), password);
     } catch (err: unknown) {
-      setError(errorMessage(err, SIGN_IN_FALLBACK));
+      if (err instanceof ApiError && err.status === 423) {
+        setError(`Your account is temporarily locked after too many unsuccessful sign-in attempts. ${err.message}`);
+      } else {
+        setError(errorMessage(err, SIGN_IN_FALLBACK));
+      }
     } finally {
       setIsLoading(false);
     }
