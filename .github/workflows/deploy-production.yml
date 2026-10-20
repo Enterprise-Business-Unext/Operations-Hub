@@ -109,7 +109,7 @@ jobs:
           IMAGE_TAG: sha-${{ github.sha }}
         run: |
           ssh "$EC2_USER@$EC2_HOST" \
-            "cd /opt/operations-hub && export IMAGE_TAG='$IMAGE_TAG' && docker compose -f docker-compose.production.yml pull && docker compose -f docker-compose.production.yml up -d --remove-orphans && docker compose -f docker-compose.production.yml ps"
+            "cd /opt/operations-hub && export IMAGE_TAG='$IMAGE_TAG' && docker compose -f docker-compose.production.yml pull && docker compose -f docker-compose.production.yml up -d --remove-orphans --wait --wait-timeout 180 && docker compose -f docker-compose.production.yml exec -T backend python scripts/create_admin.py --if-not-exists && docker compose -f docker-compose.production.yml ps"
       - name: Verify public health endpoint
         env:
           APP_URL: ${{ vars.APP_URL }}

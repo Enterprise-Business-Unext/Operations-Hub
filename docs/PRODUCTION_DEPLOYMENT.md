@@ -68,9 +68,20 @@ GRAPH_CLIENT_ID=<entra-application-client-id>
 GRAPH_CLIENT_SECRET=<entra-client-secret-value>
 GRAPH_SENDER_EMAIL=<authorized-sender-mailbox>
 EMAIL_FROM_NAME=Enterprise Ops Platform
+
+ADMIN_EMAIL=<initial-admin-email>
+ADMIN_FULL_NAME=Operations System Administrator
+ADMIN_PASSWORD=<unique-strong-initial-password>
 ```
 
 Generate random application/Redis secrets rather than reusing a password. The Compose file sets `PGSSLMODE=require`, and supplies `REDIS_HOST=redis`; don't set those to public or host addresses. `IMAGE_TAG` is supplied by the workflow for each deployment, not stored in `.env`.
+
+The admin password is used only when the configured admin email does not yet
+exist in the database. Keep this value secret and do not commit or copy `.env`
+through the deployment workflow. Once the admin is created, rotate its password
+through the app or run `create_admin.py` without `--if-not-exists` as a deliberate
+administrative operation. The password must meet the backend's configured
+password policy.
 
 ## 4. Configure GHCR access on EC2
 
@@ -114,14 +125,18 @@ The workflow uses the built-in `GITHUB_TOKEN` with package-write permission to p
 
 1. **Test:** checks out the commit, installs Python and Node dependencies, runs backend pytest and frontend Vitest.
 2. **Build and publish:** after tests pass, builds backend and frontend containers, then pushes both to GHCR tagged `sha-<full-commit-sha>`. The frontend build uses the same-origin `/api/v1` API path.
-3. **Deploy:** waits for the `production` environment, configures SSH using the supplied pinned host key and private key, copies the production Compose and Nginx template to EC2, pulls that commit's images, recreates services, and prints their status.
+3. **Deploy:** waits for the `production` environment, configures SSH using the supplied pinned host key and private key, copies the production Compose and Nginx template to EC2, pulls that commit's images, recreates services and waits for them to become healthy, creates the initial admin if it is missing, and prints service status.
 4. **Health check:** retries `https://<APP_URL>/health` and fails the workflow if it does not return a successful response.
 
 The workflow does not create AWS resources, install Docker on EC2, create the RDS database, create the TLS certificate, create the EC2 `.env`, or configure GHCR pull credentials on EC2. Those are one-time operations described above. A push to `main` triggers deployment only after both test and image-build jobs succeed.
 
 ## 7. First deployment and operations
 
-Before merging to `main`, verify the EC2 `.env`, RDS connectivity/security group, GHCR login, certificate paths, DNS, and GitHub environment values. Then push or merge to `main` and watch **Actions > Build and deploy production**.
+Before merging to `main`, verify the EC2 `.env` includes the initial admin email,
+name, and strong password, along with RDS connectivity/security group, GHCR
+login, certificate paths, DNS, and GitHub environment values. Then push or merge
+to `main` and watch **Actions > Build and deploy production**. The deployment
+prints whether it created the admin or left an existing account unchanged.
 
 Useful commands on EC2:
 

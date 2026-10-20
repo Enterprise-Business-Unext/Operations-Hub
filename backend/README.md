@@ -62,7 +62,13 @@ docker compose exec backend python scripts/create_admin.py `
   --full-name "Operations System Administrator"
 ```
 
-The script creates the account if it does not exist, or updates the existing account. Passwords must contain at least 8 characters.
+The script creates the account if it does not exist, or updates the existing account. Passwords must meet the configured password policy.
+
+Production deployments run the script with `--if-not-exists` after the backend
+is healthy. Set `ADMIN_EMAIL`, `ADMIN_FULL_NAME`, and `ADMIN_PASSWORD` in the
+EC2-only `/opt/operations-hub/.env` before the first deployment. This mode
+creates the admin once and never changes an existing account's password. For
+manual password changes, run the script without `--if-not-exists`.
 
 For non-interactive environments, provide the password through an environment variable. Do not commit it to source control:
 
