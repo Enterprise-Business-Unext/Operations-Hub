@@ -11,6 +11,7 @@ const getSessions = vi.fn();
 const getScheduledSessions = vi.fn();
 const ingestScheduleFile = vi.fn();
 const applySchedule = vi.fn();
+const getCoordinators = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -26,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getScheduledSessions: (...a: unknown[]) => getScheduledSessions(...a),
       ingestScheduleFile: (...a: unknown[]) => ingestScheduleFile(...a),
       applySchedule: (...a: unknown[]) => applySchedule(...a),
+      getCoordinators: (...a: unknown[]) => getCoordinators(...a),
     },
   };
 });
@@ -92,6 +94,7 @@ describe("Timetable ingestion preview", () => {
     getFacultyTypes.mockResolvedValue([]);
     getVerticals.mockResolvedValue([]);
     getProgramTypes.mockResolvedValue([]);
+    getCoordinators.mockResolvedValue([]);
     getSessions.mockResolvedValue([]);
     getScheduledSessions.mockResolvedValue([]);
     ingestScheduleFile.mockResolvedValue({

@@ -11,6 +11,7 @@ const getSessions = vi.fn();
 const getScheduledSessions = vi.fn();
 const getFacultyList = vi.fn();
 const createSession = vi.fn();
+const getCoordinators = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -26,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getScheduledSessions: (...a: unknown[]) => getScheduledSessions(...a),
       getFacultyList: (...a: unknown[]) => getFacultyList(...a),
       createSession: (...a: unknown[]) => createSession(...a),
+      getCoordinators: (...a: unknown[]) => getCoordinators(...a),
     },
   };
 });
@@ -128,6 +130,7 @@ describe("Log Faculty Utilization modal", () => {
     getFacultyTypes.mockResolvedValue([{ id: "ft-1", name: "Internal Full-time" }]);
     getProgramTypes.mockResolvedValue([{ id: "pt-1", name: "RBT" }]);
     getVerticals.mockResolvedValue([{ id: "v-1", name: "IT/ITES" }]);
+    getCoordinators.mockResolvedValue([]);
     getSessions.mockResolvedValue([]);
     getScheduledSessions.mockResolvedValue([scheduledSession]);
     getFacultyList.mockResolvedValue([{ full_name: "Kiran Menon" }]);

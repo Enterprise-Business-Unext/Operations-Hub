@@ -11,6 +11,7 @@ const getSessions = vi.fn();
 const getScheduledSessions = vi.fn();
 const deleteScheduledSession = vi.fn();
 const updateBatch = vi.fn();
+const getCoordinators = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -26,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getScheduledSessions: (...a: unknown[]) => getScheduledSessions(...a),
       deleteScheduledSession: (...a: unknown[]) => deleteScheduledSession(...a),
       updateBatch: (...a: unknown[]) => updateBatch(...a),
+      getCoordinators: (...a: unknown[]) => getCoordinators(...a),
     },
   };
 });
@@ -114,6 +116,7 @@ describe("BatchDetailDrawer edit modal end-date reduction", () => {
     getFacultyTypes.mockResolvedValue([]);
     getVerticals.mockResolvedValue([]);
     getProgramTypes.mockResolvedValue([]);
+    getCoordinators.mockResolvedValue([]);
     getSessions.mockResolvedValue([]);
     getScheduledSessions.mockResolvedValue([]);
     deleteScheduledSession.mockResolvedValue(undefined);

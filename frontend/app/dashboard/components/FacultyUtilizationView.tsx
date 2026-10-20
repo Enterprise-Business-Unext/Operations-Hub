@@ -176,6 +176,48 @@ const UTILIZATION_COLUMN_DEFS = [
   },
   { key: "createdAt", label: "Created At", accessor: (row: TrainingSession) => row.created_at || "" },
   { key: "updatedAt", label: "Updated At", accessor: (row: TrainingSession) => row.updated_at || "", sortable: false },
+  {
+    key: "trainingSessionId",
+    label: "Training Session ID",
+    accessor: (row: TrainingSession) => row.training_session_id || "",
+    sortable: false,
+    minWidth: 170,
+  },
+  {
+    key: "outcomeReason",
+    label: "Outcome Reason",
+    accessor: (row: TrainingSession) => row.outcome_reason || "",
+    sortable: false,
+    minWidth: 150,
+  },
+  {
+    key: "outcomeAt",
+    label: "Outcome At",
+    accessor: (row: TrainingSession) => row.outcome_at || "",
+    sortable: false,
+    minWidth: 150,
+  },
+  {
+    key: "outcomeBy",
+    label: "Outcome By",
+    accessor: (row: TrainingSession) => row.outcome_by || "",
+    sortable: false,
+    minWidth: 140,
+  },
+  {
+    key: "programType",
+    label: "Program Type",
+    accessor: (row: TrainingSession) => row.program_type_id || "",
+    sortable: false,
+    minWidth: 140,
+  },
+  {
+    key: "batchId",
+    label: "Batch ID",
+    accessor: (row: TrainingSession) => row.batch_id || "",
+    sortable: false,
+    minWidth: 150,
+  },
 ] as const satisfies readonly UtilizationColumnDef[];
 
 type ColumnKey = (typeof UTILIZATION_COLUMN_DEFS)[number]["key"];
@@ -219,6 +261,12 @@ const DEFAULT_HIDDEN: readonly ColumnKey[] = [
   "feedbackSubmitted",
   "createdAt",
   "updatedAt",
+  "trainingSessionId",
+  "outcomeReason",
+  "outcomeAt",
+  "outcomeBy",
+  "programType",
+  "batchId",
 ];
 
 // Mirrors the on-screen column order so the file reads the same way as the
@@ -246,6 +294,12 @@ const EXPORT_COLUMNS: readonly CsvColumn<TrainingSession>[] = [
   { key: "feedback_submitted", label: "Feedback Submitted" },
   { key: "created_at", label: "Created At" },
   { key: "updated_at", label: "Updated At" },
+  { key: "training_session_id", label: "Training Session ID" },
+  { key: "outcome_reason", label: "Outcome Reason" },
+  { key: "outcome_at", label: "Outcome At" },
+  { key: "outcome_by", label: "Outcome By" },
+  { key: "program_type_id", label: "Program Type" },
+  { key: "batch_id", label: "Batch ID" },
 ];
 
 interface FacultyUtilizationViewProps {
@@ -422,6 +476,12 @@ const CELL_DEFS: Record<ColumnKey, (row: TrainingSession) => CellDef> = {
   feedbackRating: (row) => numberCell(row.feedback_rating),
   createdAt: (row) => boldText(formatDateTime(row.created_at, "") || null),
   updatedAt: (row) => boldText(formatDateTime(row.updated_at, "") || null),
+  trainingSessionId: (row) => text(row.training_session_id),
+  outcomeReason: (row) => text(row.outcome_reason),
+  outcomeAt: (row) => text(row.outcome_at),
+  outcomeBy: (row) => text(row.outcome_by),
+  programType: (row) => text(row.program_type_id),
+  batchId: (row) => text(row.batch_id),
 };
 
 function UtilizationRow({
