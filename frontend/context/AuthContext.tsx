@@ -8,14 +8,12 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshAccessToken: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = "auth_token";
-const REFRESH_KEY = "refresh_token";
 // Non-sensitive presence flag read by `middleware.ts` so unauthenticated
 // requests are redirected before the page renders.
 const SESSION_COOKIE = "ops_session";
@@ -37,16 +35,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // `logout` is captured by `refreshAccessToken` and by the cross-tab listener.
   // Using a ref keeps a single stable identity without the stale-closure bug
   // that a `useCallback(..., [])` over a re-created `logout` would introduce.
-  const logoutRef = useRef<() => void>(() => {});
+  const logoutRef = useRef<() => Promise<void>>(async () => {});
 
   const clearSession = useCallback(async () => {
+    setSessionCookie(false);
+    setUser(null);
     try {
       await api.logout();
     } catch {
       // Ignore logout errors; clear local state anyway.
     }
-    setSessionCookie(false);
-    setUser(null);
   }, []);
 
   const logout = useCallback(async () => {
@@ -70,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return true;
     } catch (err) {
       console.error("Token refresh failed:", err);
-      logoutRef.current();
+      await logoutRef.current();
       return false;
     }
   }, [storeSession]);
@@ -98,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Tokens live in HttpOnly cookies; the presence flag tells us whether a session exists.
       const hasSession = document.cookie
         .split("; ")
-        .some((c) => c.startsWith(`${SESSION_COOKIE}=`));
+        .some((c) => c.startsWith(`${SESSION_COOKIE}=`) && c.slice(SESSION_COOKIE.length + 1));
       if (!hasSession) {
         if (!cancelled) setIsLoading(false);
         return;
