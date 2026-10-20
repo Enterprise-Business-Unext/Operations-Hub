@@ -1,3 +1,8 @@
+import pytest
+from app.core.config import settings
+from app.models.user import User
+
+
 def test_login_success(client):
     response = client.post(
         "/api/v1/auth/login",
@@ -17,6 +22,57 @@ def test_login_invalid_password(client):
         json={"email": "test_admin@ops.com", "password": "wrongpassword"}
     )
     assert response.status_code == 401
+
+
+def test_tenth_failed_login_attempt_locks_account(client, db_session, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_FAILED_LOGIN_ATTEMPTS", 10)
+
+    for _ in range(9):
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test_admin@ops.com", "password": "wrongpassword"},
+        )
+        assert response.status_code == 401
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "test_admin@ops.com", "password": "wrongpassword"},
+    )
+
+    assert response.status_code == 423
+    assert "locked after 10 unsuccessful sign-in attempts" in response.json()["detail"]
+    assert "IST" in response.json()["detail"]
+
+    admin = db_session.query(User).filter_by(email="test_admin@ops.com").one()
+    assert admin.failed_login_attempts == 10
+    assert admin.locked_until is not None
+
+
+def test_locked_login_returns_retry_time_in_ist(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from fastapi import HTTPException
+
+    from app.api.v1.auth.service import AuthService
+    from app.schemas.user import UserLogin
+
+    locked_until = datetime.now(timezone.utc) + timedelta(hours=1)
+    user_repo = Mock()
+    user_repo.get_by_email.return_value = SimpleNamespace(
+        id="locked-user",
+        email="locked@example.com",
+        locked_until=locked_until,
+    )
+    service = AuthService(user_repo)
+
+    with pytest.raises(HTTPException) as error:
+        service.authenticate(UserLogin(email="locked@example.com", password="unused"))
+
+    expected_ist = locked_until.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    assert error.value.status_code == 423
+    assert error.value.detail.endswith(expected_ist.strftime("%H:%M:%S IST"))
 
 
 def test_get_me_authenticated(client, admin_token_headers):

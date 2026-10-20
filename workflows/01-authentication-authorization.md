@@ -19,7 +19,7 @@ The backend implements JWT-based authentication with role-based access control (
    - If locked: return 423 with lockout expiry time
 3. Verify password hash
    - If invalid: increment `failed_login_attempts`
-   - If `failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS` (default: 5): lock account for `LOCKOUT_DURATION_MINUTES` (default: 15 minutes)
+   - If `failed_login_attempts >= MAX_FAILED_LOGIN_ATTEMPTS` (default: 10): lock account for `LOCKOUT_DURATION_MINUTES` (default: 15 minutes)
    - Return 401
 4. If valid:
    - Reset `failed_login_attempts` to 0

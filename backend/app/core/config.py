@@ -149,7 +149,7 @@ class Settings(BaseSettings):
     FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS: int = 300
 
     # Account lockout
-    MAX_FAILED_LOGIN_ATTEMPTS: int = 5
+    MAX_FAILED_LOGIN_ATTEMPTS: int = 10
     LOCKOUT_DURATION_MINUTES: int = 15
 
     # Password policy

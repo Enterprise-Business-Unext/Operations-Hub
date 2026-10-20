@@ -30,7 +30,10 @@ describe("LoginPage", () => {
 
   it("explains that a 423 lockout is temporary and shows the retry time", async () => {
     login.mockRejectedValue(
-      new ApiError("Account temporarily locked. Try again after 12:30:00 UTC", 423)
+      new ApiError(
+        "Account temporarily locked after 10 unsuccessful sign-in attempts. Try again after 18:00:00 IST",
+        423
+      )
     );
     render(<LoginPage />);
 
@@ -45,6 +48,7 @@ describe("LoginPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Your account is temporarily locked after too many unsuccessful sign-in attempts."
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("Try again after 12:30:00 UTC");
+    expect(screen.getByRole("alert")).toHaveTextContent("10 unsuccessful sign-in attempts");
+    expect(screen.getByRole("alert")).toHaveTextContent("Try again after 18:00:00 IST");
   });
 });

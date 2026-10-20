@@ -39,6 +39,7 @@ class AuthService:
 
         # Check account lockout
         if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
+            lockout_time_ist = user.locked_until.astimezone(timezone(timedelta(hours=5, minutes=30)))
             self.user_repo.log_audit_event(
                 AuditEventType.LOGIN_FAILED,
                 user_id=user.id, user_email=user.email,
@@ -47,14 +48,16 @@ class AuthService:
             )
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
-                detail=f"Account temporarily locked. Try again after {user.locked_until.strftime('%H:%M:%S UTC')}"
+                detail=f"Account temporarily locked. Try again after {lockout_time_ist.strftime('%H:%M:%S IST')}"
             )
 
         if not user or not verify_password(login_data.password, user.hashed_password):
             # Increment failed attempts
+            locked_now = False
             if user:
                 user.failed_login_attempts += 1
                 if user.failed_login_attempts >= settings.MAX_FAILED_LOGIN_ATTEMPTS:
+                    locked_now = True
                     self.user_repo.log_audit_event(
                         AuditEventType.ACCOUNT_LOCKED,
                         user_id=user.id, user_email=user.email,
@@ -70,6 +73,14 @@ class AuthService:
                 ip_address=ip_address, user_agent=user_agent,
                 details=f"Invalid password (attempt {user.failed_login_attempts if user else 1})"
             )
+            if locked_now:
+                lockout_time_ist = user.locked_until.astimezone(
+                    timezone(timedelta(hours=5, minutes=30))
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_423_LOCKED,
+                    detail=f"Account temporarily locked after {settings.MAX_FAILED_LOGIN_ATTEMPTS} unsuccessful sign-in attempts. Try again after {lockout_time_ist.strftime('%H:%M:%S IST')}"
+                )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
 
         if not user.is_active:
